@@ -1,0 +1,374 @@
+{% extends "layout.html" %}
+{% from "partials/elements.html" import toolbar, icon, modal, tab_panel, master_detail, list_row,
+   inspector_header, empty_state, test_panel %}
+{% block title %}Intent: Rules{% endblock %}
+
+{% set match_types = ("contains", "prefix", "suffix", "equals", "regex") %}
+
+{% block toolbar %}
+  {% set actions %}
+    <button type="button" class="btn btn-ghost btn-icon" data-modal-open="rules-info-modal" aria-label="How rules, transfers, and overrides work">
+      {{ icon("info") }}
+    </button>
+  {% endset %}
+  {{ toolbar("Rules & overrides",
+     tabs=[("rules", "Rules"), ("transfers", "Transfers"), ("overrides", "Overrides")],
+     active=active_tab,
+     counts={"rules": rules|length, "transfers": transfer_rules|length, "overrides": overrides|length},
+     actions=actions) }}
+{% endblock %}
+
+{% macro new_item_row(href, icon_name, label, selected) %}
+{% call list_row(href, icon_name, selected=selected) %}
+  <span class="italic text-text-secondary">{{ label }}</span>
+  <span class="badge ml-2 border-accent bg-accent-dim text-accent">NEW</span>
+{% endcall %}
+{% endmacro %}
+
+{% macro editor_actions(editing, test_href, form_id, delete_label) %}
+{% if editing %}
+<a class="btn btn-ghost" href="{{ test_href }}">{{ icon("play", "h-3.5 w-3.5") }} Test</a>
+{% endif %}
+<button type="submit" form="{{ form_id }}" class="btn text-accent">Save</button>
+{% if editing %}
+<button type="submit" form="{{ form_id }}-delete" class="btn btn-icon text-negative" aria-label="{{ delete_label }}">
+  {{ icon("trash") }}
+</button>
+{% endif %}
+{% endmacro %}
+
+{% macro delete_confirm_form(form_id, action, confirm_text) %}
+<form id="{{ form_id }}-delete" method="post" class="hidden" data-confirm="{{ confirm_text }}" action="{{ action }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+</form>
+{% endmacro %}
+
+{% macro match_type_select(id, name, selected) %}
+<select id="{{ id }}" name="{{ name }}" class="input">
+  {% for type in match_types %}
+  <option value="{{ type }}" {{ "selected" if type == selected else "" }}>{{ type }}</option>
+  {% endfor %}
+</select>
+{% endmacro %}
+
+{% macro split_row(accounts, split=None) %}
+<div class="flex items-center gap-2" data-split-row>
+  <select name="split_account" class="input flex-1" required aria-label="Split category">
+    {% for account in accounts %}
+    <option value="{{ account.id }}" {{ "selected" if split and split.account_id == account.id else "" }}>{{ account.name }}</option>
+    {% endfor %}
+  </select>
+  <input type="text" name="split_note" class="input w-28" placeholder="Note" aria-label="Split note"
+         value="{{ split.note or '' if split else '' }}" autocomplete="off">
+  <input type="number" step="0.01" name="split_amount" class="input w-24 text-right" placeholder="0.00"
+         aria-label="Split amount" data-split-amount
+         value="{{ '%.2f'|format(split.amount) if split else '' }}">
+  <button type="button" class="btn btn-ghost btn-icon text-negative shrink-0" data-split-remove aria-label="Remove line">
+    {{ icon("x") }}
+  </button>
+</div>
+{% endmacro %}
+
+{% macro split_editor(context, accounts, return_to) %}
+{% set rows = context.splits if context.splits else [None, None] %}
+<form method="post" action="{{ url_for('rules.overrides_add') }}" data-split-editor
+      data-split-total="{{ '%.2f'|format(-context.amount) }}"
+      class="mt-4 flex flex-col gap-3 border-t border-border-subtle pt-4">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <input type="hidden" name="transaction_hash" value="{{ context.transaction_hash }}">
+  <input type="hidden" name="return_to" value="{{ return_to or '' }}">
+  <input type="hidden" name="mode" value="split">
+
+  <div class="flex items-center justify-between gap-3">
+    <span class="text-xs font-medium uppercase tracking-wide text-text-secondary">Split</span>
+    <span class="text-xs text-text-secondary">across {{ (-context.amount)|money }}</span>
+  </div>
+
+  <div class="flex flex-col gap-2" data-split-rows>
+    {% for split in rows %}{{ split_row(accounts, split) }}{% endfor %}
+  </div>
+
+  <template data-split-template>{{ split_row(accounts) }}</template>
+
+  <div class="flex flex-wrap items-center justify-between gap-2">
+    <button type="button" class="btn btn-ghost text-accent" data-split-add>{{ icon("plus") }} Add line</button>
+    <span class="flex items-center gap-2 text-xs text-text-secondary">
+      Left to balance
+      <span class="mono text-sm" data-split-remaining>0.00</span>
+      <button type="button" class="btn btn-ghost btn-icon" data-split-balance
+              aria-label="Put the remainder on the last line" title="Put the remainder on the last line">
+        {{ icon("check") }}
+      </button>
+    </span>
+  </div>
+
+  <button type="submit" class="btn text-accent self-start">Save split</button>
+</form>
+{% endmacro %}
+
+{% block content %}
+
+  {% call modal("rules-info-modal", "How rules, transfers, and overrides work") %}
+    <p class="mb-3 text-sm text-text-secondary">
+      Every transaction needs a category. Rules, transfers, and overrides are checked first; if none of
+      them apply, it falls back to the payee's default account, and only lands in
+      <span class="text-text">Unknown</span> if there's no default either. These three tabs are the ways
+      a category gets picked automatically, in the order they take effect.
+    </p>
+    <ul class="list-disc space-y-2 pl-4 text-sm text-text-secondary">
+      <li><span class="text-text">Rules</span> match a transaction's description (contains, prefix, suffix,
+        exact, or regex) to a category. Rules are checked in priority order, and the first match wins. A rule
+        beats a payee's own default category. A rule can also optionally name a payee - useful for a recurring
+        charge with no fixed default - which only fills in a transaction that doesn't already have one; an
+        alias match or a manual assignment always wins over it.</li>
+      <li><span class="text-text">Transfers</span> use the same kind of pattern match to flag transfer
+        candidates, then pair them up with a min-cost match (the Hungarian algorithm) that weighs date and
+        description similarity, so a transfer between your own accounts never shows up as income or an
+        expense. A candidate that doesn't find a pair is categorized like any other transaction.</li>
+      <li><span class="text-text">Overrides</span> set the category for one specific transaction by hand,
+        from the Accounts view. An override always wins over a rule or payee default, and a split always
+        wins over an override.</li>
+      <li><span class="text-text">Splits</span> divide one transaction across as many categories as you
+        need. The editor tracks how much is still unassigned, and the split only saves once the lines add
+        up to the full amount.</li>
+    </ul>
+  {% endcall %}
+
+  {% call tab_panel("rules", active=active_tab) %}
+    {% set rule_list %}
+      {{ new_item_row(url_for('rules.rules', tab='rules'), "filter", "New rule", not editing_rule) }}
+
+      {% for rule in rules %}
+      {% call list_row(url_for('rules.rules', rule_id=rule.id, tab='rules'), "filter",
+                       selected=editing_rule and editing_rule.id == rule.id) %}
+        <span class="flex flex-wrap items-center gap-2">
+          <span class="text-xs font-semibold uppercase text-accent">{{ rule.match_type }}</span>
+          <span class="chip">{{ rule.pattern }}</span>
+          {{ icon("arrow-right", "h-3.5 w-3.5 text-text-secondary") }}
+          <span class="font-medium">{{ rule.account }}</span>
+          {% if rule.payee_name %}
+          <span class="text-text-secondary">as</span>
+          <span class="font-medium">{{ rule.payee_name }}</span>
+          {% endif %}
+        </span>
+        <span class="mt-1 flex items-center gap-1 text-xs text-text-secondary">
+          {{ icon("priority", "h-3.5 w-3.5") }} Priority {{ rule.priority }}
+        </span>
+      {% endcall %}
+      {% endfor %}
+    {% endset %}
+
+    {% set rule_detail %}
+      {% set rule_actions %}
+        {{ editor_actions(editing_rule,
+           url_for('rules.rules', rule_id=editing_rule.id, test=1, tab='rules') if editing_rule else '',
+           "rule-form", "Delete rule") }}
+      {% endset %}
+      {{ inspector_header(editing_rule.pattern if editing_rule else "New rule", rule_actions) }}
+
+      <div class="flex-1 overflow-y-auto p-3">
+        <form id="rule-form" method="post" class="flex flex-col gap-3"
+              action="{{ url_for('rules.rules_update', rule_id=editing_rule.id) if editing_rule else url_for('rules.rules_new') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <div>
+            <label class="mb-1 block text-xs text-text-secondary" for="rule-pattern">Pattern</label>
+            <input type="text" id="rule-pattern" name="pattern" class="input mono" placeholder="Pattern"
+                   value="{{ editing_rule.pattern if editing_rule else '' }}" required>
+          </div>
+          <div class="flex gap-3">
+            <div class="flex-1">
+              <label class="mb-1 block text-xs text-text-secondary" for="rule-match">Match</label>
+              {{ match_type_select("rule-match", "match_type", editing_rule.match_type if editing_rule else None) }}
+            </div>
+            <div class="w-24">
+              <label class="mb-1 block text-xs text-text-secondary" for="rule-priority">Priority</label>
+              <input type="number" id="rule-priority" name="priority" class="input"
+                     value="{{ editing_rule.priority if editing_rule else 0 }}">
+            </div>
+          </div>
+          <div>
+            <label class="mb-1 block text-xs text-text-secondary" for="rule-account">Destination account</label>
+            <select id="rule-account" name="account_id" class="input">
+              {% for account in accounts %}
+              <option value="{{ account.id }}" {{ "selected" if editing_rule and editing_rule.account_id == account.id else "" }}>{{ account.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div>
+            <label class="mb-1 block text-xs text-text-secondary" for="rule-payee">Payee (optional)</label>
+            <select id="rule-payee" name="payee_id" class="input">
+              <option value="">No payee</option>
+              {% for payee in payees %}
+              <option value="{{ payee.id }}" {{ "selected" if editing_rule and editing_rule.payee_id == payee.id else "" }}>{{ payee.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </form>
+
+        {% if editing_rule %}
+        {{ delete_confirm_form("rule-form", url_for('rules.rules_delete', rule_id=editing_rule.id), "Delete this rule?") }}
+        {% endif %}
+
+        {% if test_matches is not none %}
+        {% call test_panel(test_matches|length ~ " match(es), newest first" ~ (" (capped)" if test_matches|length >= 200 else "")) %}
+          {% for match in test_matches %}
+          <div class="flex items-center justify-between gap-3 border-b border-border-subtle px-3 py-2 text-xs last:border-b-0">
+            <span class="truncate text-text-secondary" title="{{ match.raw_description }}">{{ match.posted_date }} - {{ match.raw_description }}</span>
+            <span class="mono shrink-0">{{ match.amount | money }}</span>
+            <span class="badge shrink-0 {{ 'border-warning bg-warning-dim text-warning' if match.current_category == 'Unknown' else '' }}">{{ match.current_category }}</span>
+          </div>
+          {% else %}
+          <p class="px-3 py-2 text-xs text-text-secondary">No transactions match this pattern.</p>
+          {% endfor %}
+        {% endcall %}
+        {% endif %}
+      </div>
+    {% endset %}
+
+    {{ master_detail(rule_list, rule_detail) }}
+  {% endcall %}
+
+  {% call tab_panel("transfers", active=active_tab) %}
+    {% set transfer_list %}
+      {{ new_item_row(url_for('rules.rules', tab='transfers'), "exchange", "New transfer rule", not editing_transfer_rule) }}
+
+      {% for rule in transfer_rules %}
+      {% call list_row(url_for('rules.rules', transfer_rule_id=rule.id, tab='transfers'), "exchange",
+                       selected=editing_transfer_rule and editing_transfer_rule.id == rule.id) %}
+        <span class="flex flex-wrap items-center gap-2">
+          <span class="text-xs font-semibold uppercase text-accent">{{ rule.match_type }}</span>
+          <span class="chip">{{ rule.pattern }}</span>
+        </span>
+      {% endcall %}
+      {% endfor %}
+    {% endset %}
+
+    {% set transfer_detail %}
+      {% set transfer_actions %}
+        {{ editor_actions(editing_transfer_rule,
+           url_for('rules.rules', transfer_rule_id=editing_transfer_rule.id, test=1, tab='transfers') if editing_transfer_rule else '',
+           "transfer-form", "Delete transfer rule") }}
+      {% endset %}
+      {{ inspector_header(editing_transfer_rule.pattern if editing_transfer_rule else "New transfer rule", transfer_actions) }}
+
+      <div class="flex-1 overflow-y-auto p-3">
+        <form id="transfer-form" method="post" class="flex flex-col gap-3"
+              action="{{ url_for('rules.transfer_rules_update', rule_id=editing_transfer_rule.id) if editing_transfer_rule else url_for('rules.transfer_rules_new') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <div>
+            <label class="mb-1 block text-xs text-text-secondary" for="transfer-pattern">Pattern</label>
+            <input type="text" id="transfer-pattern" name="pattern" class="input mono" placeholder="Pattern"
+                   value="{{ editing_transfer_rule.pattern if editing_transfer_rule else '' }}" required>
+          </div>
+          <div>
+            <label class="mb-1 block text-xs text-text-secondary" for="transfer-match">Match</label>
+            {{ match_type_select("transfer-match", "match_type", editing_transfer_rule.match_type if editing_transfer_rule else None) }}
+          </div>
+        </form>
+
+        {% if editing_transfer_rule %}
+        {{ delete_confirm_form("transfer-form", url_for('rules.transfer_rules_delete', rule_id=editing_transfer_rule.id), "Delete this transfer rule?") }}
+        {% endif %}
+
+        {% if transfer_test is not none %}
+        {% call test_panel(transfer_test.pairs|length ~ " pairs, " ~ transfer_test.unmatched ~ " unmatched") %}
+          {% for pair in transfer_test.pairs %}
+          <div class="flex items-center justify-between gap-3 border-b border-border-subtle px-3 py-2 last:border-b-0">
+            <span class="min-w-0">
+              <span class="flex items-center gap-1.5 text-sm font-medium">
+                {{ pair.from_account }} {{ icon("arrow-right", "h-3.5 w-3.5 text-text-secondary") }} {{ pair.to_account }}
+              </span>
+              <span class="mt-0.5 block truncate text-xs text-text-secondary" title="{{ pair.raw_description }}">
+                {{ pair.posted_date }} - {{ pair.raw_description }}
+              </span>
+            </span>
+            <span class="mono shrink-0 text-sm">{{ pair.amount|money }}</span>
+          </div>
+          {% else %}
+          <p class="px-3 py-2 text-xs text-text-secondary">No pairs matched for this rule.</p>
+          {% endfor %}
+        {% endcall %}
+        {% endif %}
+      </div>
+    {% endset %}
+
+    {{ master_detail(transfer_list, transfer_detail) }}
+  {% endcall %}
+
+  {% call tab_panel("overrides", active=active_tab) %}
+    {% set override_list %}
+      {% for override in overrides %}
+      {% set amount %}
+        <span class="mono {{ 'amount-negative' if override.amount < 0 else 'amount-positive' }}">{{ override.amount|money }}</span>
+      {% endset %}
+      {% call list_row(url_for('rules.rules', transaction_hash=override.transaction_hash, tab='overrides', return_to=origin), "split",
+                       selected=context and context.transaction_hash == override.transaction_hash, meta=amount) %}
+        <span class="flex flex-wrap items-center gap-2">
+          <span>{{ override.payee or override.raw_description }}</span>
+          {{ icon("arrow-right", "h-3.5 w-3.5 text-text-secondary") }}
+          {% if override.default_account_name %}
+          <span class="text-text-secondary line-through">{{ override.default_account_name }}</span>
+          {% endif %}
+          <span class="font-medium">{{ override.account_name }}</span>
+        </span>
+        <span class="mt-1 flex items-center gap-1 text-xs text-text-secondary">
+          {{ icon("calendar", "h-3.5 w-3.5") }} {{ override.posted_date }}
+        </span>
+      {% endcall %}
+      {% else %}
+      <p class="p-4 text-center text-sm text-text-secondary">No overrides yet.</p>
+      {% endfor %}
+    {% endset %}
+
+    {% set override_detail %}
+      {% if context %}
+      {% set override_actions %}
+        <button type="submit" form="override-delete-form" class="btn btn-icon text-negative" aria-label="Remove override">
+          {{ icon("trash") }}
+        </button>
+      {% endset %}
+      {{ inspector_header(context.payee or context.raw_description, override_actions) }}
+
+      <div class="flex-1 overflow-y-auto p-3">
+        <div class="mb-4 flex items-start justify-between gap-3">
+          <div class="text-xs text-text-secondary">{{ context.posted_date }}</div>
+          <div class="mono text-lg {{ 'amount-negative' if context.amount < 0 else 'amount-positive' }}">{{ context.amount|money }}</div>
+        </div>
+
+        <form id="override-delete-form" method="post" class="hidden" data-confirm="Remove this override?"
+              action="{{ url_for('rules.overrides_delete', transaction_hash=context.transaction_hash) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="return_to" value="{{ origin or '' }}">
+        </form>
+
+        <form method="post" action="{{ url_for('rules.overrides_add') }}" class="flex flex-col gap-3">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="transaction_hash" value="{{ context.transaction_hash }}">
+          <input type="hidden" name="return_to" value="{{ origin or '' }}">
+          <div>
+            <label class="mb-1 block text-xs text-text-secondary" for="override-account">Destination account</label>
+            <select id="override-account" name="account_id" class="input">
+              {% for account in accounts %}
+              <option value="{{ account.id }}" {{ "selected" if account.id == context.account_id else "" }}>{{ account.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <button type="submit" class="btn text-accent self-start">Save</button>
+        </form>
+
+        {{ split_editor(context, accounts, origin) }}
+      </div>
+      {% else %}
+      {{ inspector_header("Inspector") }}
+      {{ empty_state("Select rule or override") }}
+      {% endif %}
+    {% endset %}
+
+    {{ master_detail(override_list, override_detail) }}
+  {% endcall %}
+
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/services/splits.js') }}"></script>
+{% endblock %}

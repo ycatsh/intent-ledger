@@ -1,0 +1,401 @@
+{% extends "layout.html" %}
+{% from "partials/elements.html" import toolbar, icon, tab_panel, modal %}
+{% block title %}Intent: Mappings{% endblock %}
+
+{% set mappings_tabs = [("balance_sheet", "Balance Sheet"), ("categories", "Categories"), ("payees", "Payees"), ("aliases", "Aliases"), ("counterparties", "Counterparties")] %}
+
+{% block toolbar %}
+  {% set actions %}
+    <button type="button" class="btn btn-ghost text-accent" data-reveal-active-row>
+      {{ icon("plus") }} Add entry
+    </button>
+  {% endset %}
+  {% set controls %}
+    <button type="button" class="btn btn-ghost" id="changelog-commit" disabled>{{ icon("check") }} Commit</button>
+    <button type="button" class="btn btn-ghost text-negative" id="changelog-discard" disabled>{{ icon("trash") }} Discard</button>
+    <input type="search" id="mappings-search" class="input w-32 sm:w-44" placeholder="Search..." autocomplete="off">
+    <button type="button" class="btn btn-ghost btn-icon" data-modal-open="mappings-info-modal" aria-label="How mappings work">
+      {{ icon("info") }}
+    </button>
+  {% endset %}
+  {{ toolbar("Mappings", actions=actions, controls=controls, tabs=mappings_tabs, active=active_tab,
+     counts={
+       "balance_sheet": balance_sheet_accounts|length,
+       "categories": category_accounts|length,
+       "payees": payees|length,
+       "aliases": aliases|length,
+       "counterparties": counterparties|length,
+     },
+     warn_counts={"categories": needs_review_count}) }}
+{% endblock %}
+
+{% block content %}
+  {% call modal("mappings-info-modal", "How mappings work") %}
+    <ul class="list-disc space-y-2 pl-4 text-sm text-text-secondary">
+      <li><span class="text-text">Balance Sheet</span> holds your real accounts like checking, savings, credit
+        cards .</li>
+      <li><span class="text-text">Categories</span> are the budget buckets income and expenses get sorted
+        into. The <span class="badge border-warning bg-warning-dim px-1.5 py-0 text-[10px] leading-4 text-warning">warning</span>
+        badge counts categories created automatically (from inbox) that still need a proper review. Just confirm the name, type, 
+        and parent, then edit and commit it once to clear the flag.</li>
+      <li><span class="text-text">Payees</span> are who the money went to or came from, each maps to a default
+        category (one-to-one). <span class="text-text">Aliases</span> are the exact description text that resolves to a
+        payee on import (one payee can have many).</li>
+      <li><span class="text-text">Counterparties</span> track the other party on a transaction without
+        affecting categorization. For example, if you pay for your family members you can add the corresponding member as a counterparty.</li>
+    </ul>
+  {% endcall %}
+
+  {% call tab_panel("balance_sheet", active=active_tab) %}
+    <p class="mb-3 text-xs text-text-secondary">
+    </p>
+    <div class="table-wrap mb-32">
+      <table>
+        <thead>
+          <tr>
+            <th>Name</th><th>Type</th><th>Group</th><th>Institution</th><th>Last 4</th>
+            <th>Budgetable</th><th>Active</th><th></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr data-new-row class="hidden bg-surface-raised align-middle">
+            <td class="py-1.5"><input type="text" name="name" class="input" placeholder="Name" required></td>
+            <td class="py-1.5">
+              <select name="type" class="input">
+                {% for type in ("asset", "liability", "equity") %}
+                <option value="{{ type }}">{{ type }}</option>
+                {% endfor %}
+              </select>
+            </td>
+            <td class="py-1.5">
+              <select name="parent_account_id" class="input">
+                <option value="">-</option>
+                {% for parent in balance_sheet_accounts %}
+                <option value="{{ parent.id }}">{{ parent.name }}</option>
+                {% endfor %}
+              </select>
+            </td>
+            <td class="py-1.5"><input type="text" name="institution" class="input" placeholder="Institution"></td>
+            <td class="py-1.5"><input type="text" name="account_number_last4" class="input w-16" placeholder="1234" maxlength="4" pattern="[0-9]{4}"></td>
+            <td class="py-1.5"><input type="checkbox" name="budget"></td>
+            <td class="py-1.5"><input type="checkbox" name="is_active" checked></td>
+            <td class="py-1.5 text-right whitespace-nowrap">
+              <button type="button" class="btn btn-ghost btn-icon text-accent" data-mapping-insert="accounts" aria-label="Save">
+                {{ icon("check") }}
+              </button>
+              <button type="button" class="btn btn-ghost btn-icon" data-reveal-row aria-label="Cancel">
+                {{ icon("x") }}
+              </button>
+            </td>
+          </tr>
+          {% for account in balance_sheet_accounts %}
+          <tr data-row-label="{{ account.name }}">
+            {% if account.is_system %}
+            <td>{{ account.name }}</td>
+            <td>{{ account.type }}</td>
+            <td>{{ account.parent_name or "-" }}</td>
+            <td>{{ account.institution or "-" }}</td>
+            <td>{{ account.account_number_last4 or "-" }}</td>
+            <td>{{ "Yes" if account.budget else "No" }}</td>
+            <td>{{ "Yes" if account.is_active else "No" }}</td>
+            {% else %}
+            <td>
+              <input type="text" class="input input-inline" value="{{ account.name }}" data-mapping-update="accounts:{{ account.id }}:name" autocomplete="off">
+            </td>
+            <td>
+              <select class="input input-inline" data-mapping-update="accounts:{{ account.id }}:type" autocomplete="off">
+                {% for type in ("asset", "liability", "equity") %}
+                <option value="{{ type }}" {{ "selected" if type == account.type else "" }}>{{ type }}</option>
+                {% endfor %}
+              </select>
+            </td>
+            <td>
+              <select class="input input-inline" data-mapping-update="accounts:{{ account.id }}:parent_account_id" autocomplete="off">
+                <option value="">-</option>
+                {% for parent in balance_sheet_accounts if parent.id != account.id %}
+                <option value="{{ parent.id }}" {{ "selected" if parent.id == account.parent_account_id else "" }}>{{ parent.name }}</option>
+                {% endfor %}
+              </select>
+            </td>
+            <td>
+              <input type="text" class="input input-inline" value="{{ account.institution or '' }}" data-mapping-update="accounts:{{ account.id }}:institution" placeholder="-" autocomplete="off">
+            </td>
+            <td>
+              <input type="text" class="input input-inline w-16" value="{{ account.account_number_last4 or '' }}" data-mapping-update="accounts:{{ account.id }}:account_number_last4" placeholder="-" maxlength="4" pattern="[0-9]{4}" autocomplete="off">
+            </td>
+            <td>
+              <input type="checkbox" data-mapping-update="accounts:{{ account.id }}:budget" {{ "checked" if account.budget else "" }} autocomplete="off">
+            </td>
+            <td>
+              <input type="checkbox" data-mapping-update="accounts:{{ account.id }}:is_active" {{ "checked" if account.is_active else "" }} autocomplete="off">
+            </td>
+            {% endif %}
+            <td class="text-right">
+              {% if not account.is_system %}
+              <button type="button" class="btn btn-ghost btn-icon text-negative" aria-label="Delete" data-mapping-delete="accounts:{{ account.id }}">{{ icon("trash") }}</button>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endcall %}
+
+  {% call tab_panel("categories", active=active_tab) %}
+    <p class="mb-3 text-xs text-text-secondary">
+    </p>
+    <div class="table-wrap mb-32">
+      <table>
+        <thead>
+          <tr>
+            <th>Name</th><th>Type</th><th>Group</th><th>Institution</th><th>Last 4</th>
+            <th>Budgetable</th><th>Active</th><th></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr data-new-row class="hidden bg-surface-raised align-middle">
+            <td class="py-1.5"><input type="text" name="name" class="input" placeholder="Name" required></td>
+            <td class="py-1.5">
+              <select name="type" class="input">
+                {% for type in ("income", "expense") %}
+                <option value="{{ type }}">{{ type }}</option>
+                {% endfor %}
+              </select>
+            </td>
+            <td class="py-1.5">
+              <select name="parent_account_id" class="input">
+                <option value="">-</option>
+                {% for parent in category_accounts %}
+                <option value="{{ parent.id }}">{{ parent.name }}</option>
+                {% endfor %}
+              </select>
+            </td>
+            <td class="py-1.5"><input type="text" name="institution" class="input" placeholder="Institution"></td>
+            <td class="py-1.5"><input type="text" name="account_number_last4" class="input w-16" placeholder="1234" maxlength="4" pattern="[0-9]{4}"></td>
+            <td class="py-1.5"><input type="checkbox" name="budget"></td>
+            <td class="py-1.5"><input type="checkbox" name="is_active" checked></td>
+            <td class="py-1.5 text-right whitespace-nowrap">
+              <button type="button" class="btn btn-ghost btn-icon text-accent" data-mapping-insert="accounts" aria-label="Save">
+                {{ icon("check") }}
+              </button>
+              <button type="button" class="btn btn-ghost btn-icon" data-reveal-row aria-label="Cancel">
+                {{ icon("x") }}
+              </button>
+            </td>
+          </tr>
+          {% for account in category_accounts %}
+          <tr class="{{ 'bg-warning-dim' if account.needs_review else '' }}" data-row-label="{{ account.name }}">
+            {% if account.is_system %}
+            <td>{{ account.name }}</td>
+            <td>{{ account.type }}</td>
+            <td>{{ account.parent_name or "-" }}</td>
+            <td>{{ account.institution or "-" }}</td>
+            <td>{{ account.account_number_last4 or "-" }}</td>
+            <td>{{ "Yes" if account.budget else "No" }}</td>
+            <td>{{ "Yes" if account.is_active else "No" }}</td>
+            {% else %}
+            <td>
+              <input type="text" class="input input-inline" value="{{ account.name }}" data-mapping-update="accounts:{{ account.id }}:name" title="{{ 'Quick-created from Inbox. Check the type and category.' if account.needs_review else '' }}" autocomplete="off">
+            </td>
+            <td>
+              <select class="input input-inline" data-mapping-update="accounts:{{ account.id }}:type" autocomplete="off">
+                {% for type in ("income", "expense") %}
+                <option value="{{ type }}" {{ "selected" if type == account.type else "" }}>{{ type }}</option>
+                {% endfor %}
+              </select>
+            </td>
+            <td>
+              <select class="input input-inline" data-mapping-update="accounts:{{ account.id }}:parent_account_id" autocomplete="off">
+                <option value="">-</option>
+                {% for parent in category_accounts if parent.id != account.id %}
+                <option value="{{ parent.id }}" {{ "selected" if parent.id == account.parent_account_id else "" }}>{{ parent.name }}</option>
+                {% endfor %}
+              </select>
+            </td>
+            <td>
+              <input type="text" class="input input-inline" value="{{ account.institution or '' }}" data-mapping-update="accounts:{{ account.id }}:institution" placeholder="-" autocomplete="off">
+            </td>
+            <td>
+              <input type="text" class="input input-inline w-16" value="{{ account.account_number_last4 or '' }}" data-mapping-update="accounts:{{ account.id }}:account_number_last4" placeholder="-" maxlength="4" pattern="[0-9]{4}" autocomplete="off">
+            </td>
+            <td>
+              <input type="checkbox" data-mapping-update="accounts:{{ account.id }}:budget" {{ "checked" if account.budget else "" }} autocomplete="off">
+            </td>
+            <td>
+              <input type="checkbox" data-mapping-update="accounts:{{ account.id }}:is_active" {{ "checked" if account.is_active else "" }} autocomplete="off">
+            </td>
+            {% endif %}
+            <td class="text-right">
+              {% if not account.is_system %}
+              <button type="button" class="btn btn-ghost btn-icon text-negative" aria-label="Delete" data-mapping-delete="accounts:{{ account.id }}">{{ icon("trash") }}</button>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endcall %}
+
+  {% call tab_panel("payees", active=active_tab) %}
+    <div class="table-wrap mb-32">
+      <table>
+        <thead>
+          <tr><th>Name</th><th>Default category</th><th class="text-right">Aliases</th><th></th></tr>
+        </thead>
+        <tbody>
+          <tr data-new-row class="hidden bg-surface-raised align-middle">
+            <td class="py-1.5"><input type="text" name="canonical_name" class="input" placeholder="Name" required></td>
+            <td class="py-1.5">
+              <select name="account_id" class="input">
+                <option value="">-</option>
+                {% for account in accounts %}
+                <option value="{{ account.id }}">{{ account.name }}</option>
+                {% endfor %}
+              </select>
+            </td>
+            <td></td>
+            <td class="py-1.5 text-right whitespace-nowrap">
+              <button type="button" class="btn btn-ghost btn-icon text-accent" data-mapping-insert="payees" aria-label="Save">
+                {{ icon("check") }}
+              </button>
+              <button type="button" class="btn btn-ghost btn-icon" data-reveal-row aria-label="Cancel">
+                {{ icon("x") }}
+              </button>
+            </td>
+          </tr>
+          {% for payee in payees %}
+          <tr data-row-label="{{ payee.canonical_name }}">
+            {% if payee.is_system %}
+            <td>{{ payee.canonical_name }}</td>
+            {% else %}
+            <td>
+              <input type="text" class="input input-inline" value="{{ payee.canonical_name }}" data-mapping-update="payees:{{ payee.id }}:canonical_name" autocomplete="off">
+            </td>
+            {% endif %}
+            <td>
+              <select class="input input-inline" data-mapping-update="payees:{{ payee.id }}:account_id" autocomplete="off">
+                <option value="">-</option>
+                {% for account in accounts %}
+                <option value="{{ account.id }}" {{ "selected" if account.id == payee.account_id else "" }}>{{ account.name }}</option>
+                {% endfor %}
+              </select>
+            </td>
+            <td class="text-right">{{ payee.alias_count }}</td>
+            <td class="text-right">
+              {% if not payee.is_system %}
+              <button type="button" class="btn btn-ghost btn-icon text-negative" aria-label="Delete" data-mapping-delete="payees:{{ payee.id }}">{{ icon("trash") }}</button>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endcall %}
+
+  {% call tab_panel("aliases", active=active_tab) %}
+    <div class="table-wrap mb-32">
+      <table>
+        <thead>
+          <tr><th>Alias</th><th>Payee</th><th class="text-right">Uses</th><th></th></tr>
+        </thead>
+        <tbody>
+          <tr data-new-row class="hidden bg-surface-raised align-middle">
+            <td class="py-1.5 mono">
+              <input type="hidden" name="source" value="manual">
+              <input type="text" name="alias" class="input mono" placeholder="Alias" required>
+            </td>
+            <td class="py-1.5">
+              <select name="payee_id" class="input" required>
+                {% for payee in payees %}
+                <option value="{{ payee.id }}">{{ payee.canonical_name }}</option>
+                {% endfor %}
+              </select>
+            </td>
+            <td></td>
+            <td class="py-1.5 text-right whitespace-nowrap">
+              <button type="button" class="btn btn-ghost btn-icon text-accent" data-mapping-insert="payee_aliases" aria-label="Save">
+                {{ icon("check") }}
+              </button>
+              <button type="button" class="btn btn-ghost btn-icon" data-reveal-row aria-label="Cancel">
+                {{ icon("x") }}
+              </button>
+            </td>
+          </tr>
+          {% for alias in aliases %}
+          <tr data-row-label="{{ alias.alias }}">
+            <td class="mono">
+              <input type="text" class="input input-inline mono" value="{{ alias.alias }}" data-mapping-update="payee_aliases:{{ alias.id }}:alias" autocomplete="off">
+            </td>
+            <td>
+              <select class="input input-inline" data-mapping-update="payee_aliases:{{ alias.id }}:payee_id" autocomplete="off">
+                {% for payee in payees %}
+                <option value="{{ payee.id }}" {{ "selected" if payee.id == alias.payee_id else "" }}>{{ payee.canonical_name }}</option>
+                {% endfor %}
+              </select>
+            </td>
+            <td class="text-right">{{ alias.usage_count }}</td>
+            <td class="text-right">
+              <button type="button" class="btn btn-ghost btn-icon text-negative" aria-label="Delete" data-mapping-delete="payee_aliases:{{ alias.id }}">{{ icon("trash") }}</button>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="4" class="py-4 text-center text-text-secondary">No aliases yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endcall %}
+
+  {% call tab_panel("counterparties", active=active_tab) %}
+    <div class="table-wrap mb-32">
+      <table>
+        <thead>
+          <tr><th>Name</th><th class="text-right">Transactions</th><th></th></tr>
+        </thead>
+        <tbody>
+          <tr data-new-row class="hidden bg-surface-raised align-middle">
+            <td class="py-1.5"><input type="text" name="name" class="input" placeholder="Name" required></td>
+            <td></td>
+            <td class="py-1.5 text-right whitespace-nowrap">
+              <button type="button" class="btn btn-ghost btn-icon text-accent" data-mapping-insert="counterparties" aria-label="Save">
+                {{ icon("check") }}
+              </button>
+              <button type="button" class="btn btn-ghost btn-icon" data-reveal-row aria-label="Cancel">
+                {{ icon("x") }}
+              </button>
+            </td>
+          </tr>
+          {% for counterparty in counterparties %}
+          <tr data-row-label="{{ counterparty.name }}">
+            <td>
+              <input type="text" class="input input-inline" value="{{ counterparty.name }}" data-mapping-update="counterparties:{{ counterparty.id }}:name" autocomplete="off">
+            </td>
+            <td class="text-right">{{ counterparty.usage_count }}</td>
+            <td class="text-right">
+              <button type="button" class="btn btn-ghost btn-icon text-negative" aria-label="Delete" data-mapping-delete="counterparties:{{ counterparty.id }}">{{ icon("trash") }}</button>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="3" class="py-4 text-center text-text-secondary">No counterparties yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endcall %}
+
+  <div id="mappings-changelog" class="changelog-bar hidden">
+    <button type="button" class="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-text-secondary hover:text-text md:px-4" id="changelog-toggle">
+      <span id="changelog-toggle-icon" class="rotate-90 transition-transform">{{ icon("chevron-right") }}</span>
+      Pending changes
+      <span class="badge border-warning bg-warning-dim px-1.5 py-0 text-[10px] leading-4 text-warning" id="changelog-count">0</span>
+    </button>
+    <div id="changelog-summary" class="mono h-24 overflow-y-auto border-t border-border-subtle px-3 py-2 text-xs text-text-secondary md:px-4"></div>
+  </div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/services/mappings.js') }}"></script>
+{% endblock %}

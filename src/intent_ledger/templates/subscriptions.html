@@ -1,0 +1,209 @@
+{% extends "layout.html" %}
+{% from "partials/elements.html" import toolbar, icon, modal, tab_panel %}
+{% block title %}Intent: Subscriptions{% endblock %}
+
+{% block toolbar %}
+  {% set actions %}
+    <button type="button" class="btn btn-ghost text-accent" data-modal-open="add-subscription-modal">
+      {{ icon("plus") }} Add subscription
+    </button>
+  {% endset %}
+  {{ toolbar("Subscriptions", actions=actions,
+     tabs=[("active", "Active"), ("candidates", "Candidates"), ("cancelled", "Cancelled")],
+     active=active_tab,
+     counts={"active": subscriptions.active|length, "candidates": subscriptions.candidates|length, "cancelled": subscriptions.cancelled|length}) }}
+{% endblock %}
+
+{% block content %}
+  {% call modal("add-subscription-modal", "Add subscription") %}
+    <form method="post" action="{{ url_for('subscriptions.subscriptions_new') }}" class="flex flex-col gap-3">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div>
+        <label class="mb-1 block text-xs text-text-secondary" for="payee_id">Payee</label>
+        <select name="payee_id" id="payee_id" class="input">
+          {% for payee in payees %}
+          <option value="{{ payee.id }}">{{ payee.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label class="mb-1 block text-xs text-text-secondary" for="amount">Amount</label>
+        <input type="number" step="0.01" name="amount" id="amount" class="input" required>
+      </div>
+      <div>
+        <label class="mb-1 block text-xs text-text-secondary" for="cadence">Cadence</label>
+        <select name="cadence" id="cadence" class="input">
+          <option value="weekly">weekly</option>
+          <option value="monthly" selected>monthly</option>
+          <option value="quarterly">quarterly</option>
+          <option value="yearly">yearly</option>
+        </select>
+      </div>
+      <button type="submit" class="btn btn-primary mt-1">Add</button>
+    </form>
+  {% endcall %}
+
+  <div class="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
+    <div class="panel">
+      <div class="text-xs text-text-secondary">Monthly</div>
+      <div class="mono text-lg">{{ subscriptions.totals.monthly|money }}</div>
+    </div>
+    <div class="panel">
+      <div class="text-xs text-text-secondary">Annualized</div>
+      <div class="mono text-lg">{{ subscriptions.totals.annualized|money }}</div>
+    </div>
+    <div class="panel">
+      <div class="text-xs text-text-secondary">Missed</div>
+      <div class="mono text-lg {{ 'amount-negative' if subscriptions.totals.missed_count else '' }}">
+        {{ subscriptions.totals.missed_count }}
+      </div>
+    </div>
+    <div class="panel">
+      <div class="text-xs text-text-secondary">Due in 7 days</div>
+      <div class="mono text-lg">{{ subscriptions.totals.due_7d_amount|money }}</div>
+    </div>
+  </div>
+
+  {% call tab_panel("active", active=active_tab) %}
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Name</th><th>Cadence</th><th class="text-right">Amount</th><th>Next</th><th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for sub in subscriptions.active %}
+          <tr>
+            <td>
+              {{ sub.name }}
+              {% if sub.missed %}<span class="badge text-negative">missed</span>{% endif %}
+            </td>
+            <td>{{ sub.cadence }}</td>
+            <td class="text-right mono">{{ (sub.amount|abs)|money }}</td>
+            <td>{{ sub.next_expected_date }}</td>
+            <td class="text-right whitespace-nowrap">
+              <button type="button" class="btn btn-ghost btn-icon" data-modal-open="edit-subscription-{{ sub.id }}" aria-label="Edit subscription">
+                {{ icon("edit") }}
+              </button>
+              <form method="post" action="{{ url_for('subscriptions.subscriptions_cancel', subscription_id=sub.id) }}" class="inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-ghost">Cancel</button>
+              </form>
+              <form method="post" action="{{ url_for('subscriptions.subscriptions_delete', subscription_id=sub.id) }}" class="inline"
+                    data-confirm="Delete this subscription?">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-ghost btn-icon text-negative" aria-label="Delete subscription">{{ icon("trash") }}</button>
+              </form>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="5" class="py-4 text-center text-text-secondary">No active subscriptions.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endcall %}
+
+  {% call tab_panel("cancelled", active=active_tab) %}
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Name</th><th>Cadence</th><th class="text-right">Amount</th><th>Cancelled</th><th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for sub in subscriptions.cancelled %}
+          <tr>
+            <td>{{ sub.name }}</td>
+            <td>{{ sub.cadence }}</td>
+            <td class="text-right mono">{{ (sub.amount|abs)|money }}</td>
+            <td>{{ sub.cancelled_at }}</td>
+            <td class="text-right whitespace-nowrap">
+              <button type="button" class="btn btn-ghost btn-icon" data-modal-open="edit-subscription-{{ sub.id }}" aria-label="Edit subscription">
+                {{ icon("edit") }}
+              </button>
+              <form method="post" action="{{ url_for('subscriptions.subscriptions_reactivate', subscription_id=sub.id) }}" class="inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-ghost text-accent">Reactivate</button>
+              </form>
+              <form method="post" action="{{ url_for('subscriptions.subscriptions_delete', subscription_id=sub.id) }}" class="inline"
+                    data-confirm="Delete this subscription?">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-ghost btn-icon text-negative" aria-label="Delete subscription">{{ icon("trash") }}</button>
+              </form>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="5" class="py-4 text-center text-text-secondary">No cancelled subscriptions.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endcall %}
+
+  {% call tab_panel("candidates", active=active_tab) %}
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Payee</th><th>Cadence</th><th class="text-right">Amount</th><th>Last charged</th><th></th></tr>
+        </thead>
+        <tbody>
+          {% for candidate in subscriptions.candidates %}
+          <tr>
+            <td>{{ candidate.payee }}</td>
+            <td>{{ candidate.cadence }}</td>
+            <td class="text-right mono">{{ (candidate.amount|abs)|money }}</td>
+            <td>{{ candidate.last_charged }}</td>
+            <td class="text-right">
+              <form method="post" action="{{ url_for('subscriptions.subscriptions_new') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="payee_id" value="{{ candidate.payee_id }}">
+                <input type="hidden" name="amount" value="{{ candidate.amount|abs }}">
+                <input type="hidden" name="cadence" value="{{ candidate.cadence }}">
+                <button type="submit" class="btn btn-ghost text-accent">{{ icon("plus") }} Track</button>
+              </form>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="5" class="py-4 text-center text-text-secondary">No candidates.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endcall %}
+
+  {% for sub in subscriptions.active + subscriptions.cancelled %}
+  {% call modal("edit-subscription-" ~ sub.id, "Edit subscription") %}
+    <form method="post" action="{{ url_for('subscriptions.subscriptions_edit', subscription_id=sub.id) }}" class="flex flex-col gap-3">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div>
+        <label class="mb-1 block text-xs text-text-secondary">Payee</label>
+        <select name="payee_id" class="input">
+          {% for payee in payees %}
+          <option value="{{ payee.id }}" {{ "selected" if payee.id == sub.payee_id else "" }}>{{ payee.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label class="mb-1 block text-xs text-text-secondary">Amount</label>
+        <input type="number" step="0.01" name="amount" class="input" value="{{ '%.2f'|format(sub.amount|abs) }}" required>
+      </div>
+      <div>
+        <label class="mb-1 block text-xs text-text-secondary">Cadence</label>
+        <select name="cadence" class="input">
+          {% for c in ("weekly", "monthly", "quarterly", "yearly") %}
+          <option value="{{ c }}" {{ "selected" if sub.cadence == c else "" }}>{{ c }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label class="mb-1 block text-xs text-text-secondary">Notes</label>
+        <input type="text" name="notes" class="input" value="{{ sub.notes or '' }}">
+      </div>
+      <button type="submit" class="btn btn-primary mt-1">{{ icon("check") }} Save</button>
+    </form>
+  {% endcall %}
+  {% endfor %}
+{% endblock %}

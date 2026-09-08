@@ -1,0 +1,105 @@
+{% from "partials/elements.html" import icon %}
+<!doctype html>
+<html lang="en" class="h-full">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ csrf_token() }}">
+  <title>{% block title %}Intent{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+  {% block styles %}{% endblock %}
+</head>
+<body class="h-full">
+  <div class="flex h-full flex-col md:flex-row">
+    <header class="flex items-center justify-between border-b border-border bg-surface px-4 py-3 md:hidden">
+      <button type="button" id="nav-toggle" class="btn btn-ghost btn-icon" aria-expanded="false" aria-controls="sidebar" aria-label="Menu">
+        {{ icon("menu") }}
+      </button>
+      <span class="font-semibold">intent-ledger</span>
+    </header>
+
+    <nav id="sidebar" class="hidden w-full shrink-0 flex-col border-b border-border bg-surface p-3 md:flex md:h-full md:w-56 md:border-b-0 md:p-4">
+      <div class="mb-5 hidden px-3 text-base font-semibold tracking-tight md:block">intent-ledger</div>
+
+      <div class="flex flex-1 flex-col overflow-y-auto">
+        {% set nav_groups = [
+          [
+            ("inbox.inbox", "Inbox"),
+            ("import.import_page", "Import"),
+          ],
+          [
+            ("budget.budget", "Budget"),
+            ("expenses.expenses", "Expenses"),
+            ("accounts.accounts", "Accounts"),
+            ("subscriptions.subscriptions", "Subscriptions"),
+            ("charts.charts", "Charts"),
+          ],
+          [
+            ("projects.projects", "Projects"),
+            ("mappings.mappings", "Chart of Accounts"),
+            ("rules.rules", "Rules"),
+            ("settings.settings", "Settings"),
+          ],
+        ] %}
+
+        {% for group in nav_groups %}
+        <div class="flex flex-col gap-1 {{ 'mt-4 border-t border-border-subtle pt-4' if not loop.first else '' }}">
+          {% for endpoint, label in group %}
+            <a href="{{ url_for(endpoint) }}"
+               class="nav-link {{ 'nav-link-active' if request.blueprint == endpoint.split('.')[0] else '' }}">
+              {{ label }}
+              {% if nav_badges.get(endpoint) %}
+              <span class="badge border-warning bg-warning-dim px-1.5 py-0 text-[10px] leading-4 text-warning">{{ nav_badges[endpoint] }}</span>
+              {% endif %}
+            </a>
+          {% endfor %}
+        </div>
+        {% endfor %}
+      </div>
+
+      <form method="post" action="{{ url_for('dashboard.refresh') }}" class="mt-4 shrink-0">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn w-full">{{ icon("refresh") }} Rebuild ledger</button>
+      </form>
+    </nav>
+
+    <main class="flex min-w-0 flex-1 flex-col overflow-y-auto" data-tabs>
+      <div class="shrink-0 min-h-[92px] bg-bg px-3 pt-5 pb-3 md:px-4 md:pt-6">
+        <div class="mx-auto max-w-[1600px]">
+          {% block toolbar %}{% endblock %}
+        </div>
+      </div>
+      <div class="flex-1 bg-body px-2 py-4 md:px-3">
+        <div class="mx-auto max-w-[1600px]">
+          {% block content %}{% endblock %}
+        </div>
+      </div>
+      {# Last child of the scroll container, so `sticky bottom-0` keeps it on
+         screen while the content scrolls under it. Pages without a status bar
+         render no bar at all. #}
+      {% if self.statusbar() | trim %}
+      <div class="sticky bottom-0 z-20 shrink-0 border-t border-border bg-surface px-3 py-1.5 md:px-4">
+        <div class="mx-auto flex max-w-[1600px] flex-wrap items-center gap-x-5 gap-y-1 text-xs text-text-secondary">
+          {% block statusbar %}{% endblock %}
+        </div>
+      </div>
+      {% endif %}
+    </main>
+  </div>
+
+  <div class="flash-container fixed bottom-4 right-4 z-50 flex flex-col gap-2" id="flash-container">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for category, message in messages %}
+        <div class="flash flash-{{ category }}" data-flash="{{ category }}">
+          <span>{{ message }}</span>
+          <button type="button" class="btn btn-ghost btn-icon" data-flash-dismiss aria-label="Dismiss">{{ icon("x") }}</button>
+        </div>
+      {% endfor %}
+    {% endwith %}
+  </div>
+
+  <script src="{{ url_for('static', filename='js/combobox.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

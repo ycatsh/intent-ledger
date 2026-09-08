@@ -1,0 +1,512 @@
+@import "tailwindcss";
+
+/* input.css lives in static/css/ */
+@source "../../templates";
+
+/* Fonts are to be sourced locally */
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src:
+    url("../fonts/inter/inter-400.woff2") format("woff2"),
+    url("../fonts/inter/inter-400.woff") format("woff");
+}
+
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src:
+    url("../fonts/inter/inter-500.woff2") format("woff2"),
+    url("../fonts/inter/inter-500.woff") format("woff");
+}
+
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src:
+    url("../fonts/inter/inter-600.woff2") format("woff2"),
+    url("../fonts/inter/inter-600.woff") format("woff");
+}
+
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src:
+    url("../fonts/ibm-plex-mono/ibm-plex-mono-400.woff2") format("woff2"),
+    url("../fonts/ibm-plex-mono/ibm-plex-mono-400.woff") format("woff");
+}
+
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src:
+    url("../fonts/ibm-plex-mono/ibm-plex-mono-500.woff2") format("woff2"),
+    url("../fonts/ibm-plex-mono/ibm-plex-mono-500.woff") format("woff");
+}
+
+@theme {
+  --font-sans: "Inter", system-ui, -apple-system, sans-serif;
+  --font-mono: "IBM Plex Mono", "Fira Code", monospace;
+
+  --color-bg: #131417;
+  --color-surface: #18191c;
+  --color-body: #1a1b1f;
+  --color-surface-raised: #1e2023;
+  --color-surface-hover: #25272b;
+  --color-border: #34373b;
+  --color-border-subtle: #2a2c30;
+  --color-text: #d8d8d8;
+  --color-text-secondary: #b0b0b0;
+  --color-muted: #9a9a9a;
+  --color-muted-deep: #6a6a6a;
+
+  --color-accent: #4a9eff;
+  --color-accent-dim: #1e3a5f;
+  --color-positive: #3d9970;
+  --color-positive-dim: #1a3b2d;
+  --color-negative: #c0392b;
+  --color-negative-dim: #3b1a1a;
+  --color-warning: #c9921a;
+  --color-warning-dim: #3b2e0a;
+  --color-purple: #8b7bd8;
+  --color-purple-dim: #2a2650;
+  --color-orange: #cc7a3d;
+  --color-orange-dim: #3d2a1a;
+
+  --radius-DEFAULT: 6px;
+  --radius-sm: 4px;
+  --radius-lg: 10px;
+}
+
+@layer base {
+  html,
+  body {
+    height: 100%;
+  }
+
+  body {
+    background-color: var(--color-bg);
+    color: var(--color-text);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  a {
+    color: var(--color-accent);
+  }
+
+  code,
+  .mono {
+    font-family: var(--font-mono);
+  }
+
+  ::selection {
+    background: var(--color-accent-dim);
+    color: var(--color-text);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 1px;
+  }
+
+  input[type="number"] {
+    appearance: textfield;
+    -moz-appearance: textfield;
+  }
+
+  input[type="number"]::-webkit-outer-spin-button,
+  input[type="number"]::-webkit-inner-spin-button {
+    appearance: none;
+    -webkit-appearance: none;
+    margin: 0;
+  }
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-md border border-border
+      bg-surface-raised px-3 py-1.5 text-sm font-medium text-text transition-colors
+      hover:bg-surface-hover focus-visible:outline-2 focus-visible:outline-accent
+      disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .btn-primary {
+    @apply border-transparent bg-accent text-white hover:bg-accent/90;
+  }
+
+  .btn-danger {
+    @apply border-transparent bg-negative text-white hover:bg-negative/90;
+  }
+
+  .btn-ghost {
+    @apply border-transparent bg-transparent px-2 text-text-secondary
+      hover:bg-surface-hover hover:text-text;
+  }
+
+  .btn-icon {
+    @apply px-1.5;
+  }
+
+  .modal {
+    @apply m-auto w-full max-w-md rounded-lg border border-border bg-surface p-5 text-text shadow-xl;
+  }
+
+  .modal::backdrop {
+    background: rgb(0 0 0 / 0.6);
+  }
+
+  .input {
+    @apply w-full rounded-md border border-border bg-surface px-3 py-1.5 text-sm text-text
+      placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent;
+  }
+
+  select.input {
+    appearance: none;
+    -webkit-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239a9a9a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6l6 -6' /%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: left 0.5rem center;
+    background-size: 14px;
+    padding-left: 1.75rem;
+  }
+
+  .input-inline {
+    @apply border-transparent bg-transparent px-0.5 py-0.5 hover:border-border-subtle
+      focus-visible:border-border focus-visible:bg-surface;
+  }
+
+  /* A <select> enhanced by the combobox keeps its element - so its name,
+     value, change events and validation all still work - but hands its
+     rendering over to the text input that stands in for it. It stays
+     focusable so constraint validation has something to point at. */
+  .combobox-native {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border-width: 0;
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .combobox-display {
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239a9a9a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6l6 -6' /%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: left 0.5rem center;
+    background-size: 14px;
+    padding-left: 1.75rem;
+    cursor: pointer;
+  }
+
+  .combobox-display.input-inline {
+    background-image: none;
+    padding-left: 0.125rem;
+  }
+
+  select.input-inline {
+    appearance: none;
+    -webkit-appearance: none;
+    background-image: none;
+    padding-left: 0.125rem;
+  }
+
+  .panel {
+    @apply rounded-lg border border-border bg-surface p-4;
+  }
+
+  .dropzone-row {
+    @apply cursor-pointer text-text-secondary transition-colors hover:bg-surface-hover hover:text-text;
+  }
+
+  .dropzone-active {
+    @apply bg-accent-dim text-accent;
+  }
+
+  .chart-tooltip {
+    @apply pointer-events-none absolute z-10 min-w-40 -translate-x-1/2 -translate-y-[calc(100%+10px)]
+      rounded-lg border border-border bg-surface-raised px-3 py-2 text-xs opacity-0 shadow-xl
+      transition-opacity;
+  }
+
+  .badge {
+    @apply inline-flex items-center gap-1 rounded-full border border-border px-2 py-0.5
+      text-xs font-medium text-text-secondary;
+  }
+
+  .table-wrap {
+    @apply overflow-x-auto rounded-lg border border-border;
+  }
+
+  .table-wrap table {
+    @apply w-full border-collapse text-sm;
+  }
+
+  .table-wrap th {
+    @apply border-b border-border bg-surface-raised px-3 py-1 text-left text-xs font-medium
+      text-text-secondary;
+  }
+
+  .table-wrap td {
+    @apply border-b border-border-subtle px-3 py-1;
+  }
+
+  .table-wrap tr:last-child td {
+    @apply border-b-0;
+  }
+
+  .ledger-table thead th {
+    @apply sticky top-0 z-10;
+  }
+
+  .ledger-table[data-hidden~="payee"] [data-col="payee"],
+  .ledger-table[data-hidden~="account"] [data-col="account"],
+  .ledger-table[data-hidden~="projects"] [data-col="projects"],
+  .ledger-table[data-hidden~="counterparty"] [data-col="counterparty"] {
+    display: none;
+  }
+
+  .ledger-table[data-hidden~="payee"] col[data-col="payee"],
+  .ledger-table[data-hidden~="account"] col[data-col="account"],
+  .ledger-table[data-hidden~="projects"] col[data-col="projects"],
+  .ledger-table[data-hidden~="counterparty"] col[data-col="counterparty"] {
+    width: 0;
+  }
+
+  summary.btn {
+    list-style: none;
+    cursor: pointer;
+  }
+
+  summary.btn::-webkit-details-marker {
+    display: none;
+  }
+
+  @media (max-width: 767px) {
+    .ledger-table thead {
+      display: none;
+    }
+
+    .ledger-table,
+    .ledger-table tbody,
+    .ledger-table tr,
+    .ledger-table td {
+      display: block;
+      width: 100% !important;
+    }
+
+    .ledger-table tr {
+      @apply border-b border-border-subtle px-3 py-2;
+    }
+
+    .ledger-table tr:last-child {
+      @apply border-b-0;
+    }
+
+    .ledger-table td {
+      @apply flex items-center gap-2 border-b-0 px-0 py-0.5 text-right;
+    }
+
+    .ledger-table td[data-label]::before {
+      content: attr(data-label);
+      @apply mr-auto shrink-0 text-left text-xs text-text-secondary;
+    }
+  }
+
+  .amount-positive {
+    @apply text-positive;
+  }
+
+  .amount-negative {
+    @apply text-negative;
+  }
+
+  .nav-link {
+    @apply flex items-center gap-2 rounded-md px-3 py-2 text-sm text-text-secondary
+      transition-colors hover:bg-surface-hover hover:text-text;
+  }
+
+  .nav-link-active {
+    @apply bg-surface-hover text-text;
+  }
+
+  .tab-active {
+    @apply bg-surface-raised text-accent;
+  }
+
+  .list-row {
+    @apply flex w-full items-center gap-3 border-b border-l-2 border-border-subtle border-l-transparent
+      px-3 py-2.5 text-sm text-text transition-colors hover:bg-surface-hover;
+  }
+
+  .list-row-active {
+    @apply border-l-accent bg-surface-raised;
+  }
+
+  .list-row-icon {
+    @apply flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border-subtle
+      bg-surface text-accent;
+  }
+
+  .chip {
+    @apply rounded border border-border-subtle bg-surface-raised px-1.5 py-0.5 font-mono text-xs;
+  }
+
+  .link-subtle {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  .link-subtle:hover {
+    text-decoration: underline;
+    text-decoration-color: var(--color-muted-deep);
+    text-underline-offset: 2px;
+  }
+
+  .action-bar {
+    @apply flex flex-wrap items-center gap-2 border-b border-border-subtle bg-surface-raised px-3 py-2;
+  }
+
+  .pill-bar {
+    @apply fixed bottom-6 left-1/2 z-40 flex -translate-x-1/2 items-center gap-2 rounded-full
+      border border-border bg-surface-raised px-3 py-2 shadow-xl;
+  }
+
+  .changelog-bar {
+    @apply fixed inset-x-0 bottom-0 z-40 border-t border-border bg-surface shadow-xl md:left-56;
+  }
+
+  .flash {
+    @apply flex items-center justify-between gap-3 rounded-md border border-border
+      border-l-4 bg-surface-raised px-3 py-2 text-sm shadow-lg;
+  }
+
+  .flash-success {
+    @apply border-l-positive;
+  }
+
+  .flash-error {
+    @apply border-l-negative;
+  }
+
+  .flash-info {
+    @apply border-l-accent;
+  }
+
+  .toolbar--desktop-only {
+    @apply hidden md:flex;
+  }
+
+  .mtoolbar {
+    @apply flex items-center justify-between gap-2 md:hidden;
+  }
+
+  .mtoolbar-menu {
+    @apply absolute right-0 z-30 mt-1 w-56 rounded-md border border-border bg-surface-raised
+      p-2 shadow-xl;
+  }
+
+  .budget-hero {
+    @apply mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4;
+  }
+
+  .stat-tile {
+    @apply flex flex-col gap-1 rounded-lg border border-border bg-surface p-4;
+  }
+
+  .stat-tile-label {
+    @apply text-xs text-text-secondary;
+  }
+
+  .stat-tile-value {
+    @apply text-lg;
+    font-family: var(--font-mono);
+  }
+
+  .attention-strip {
+    @apply mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-negative-dim
+      bg-negative-dim/30 px-3 py-2 text-xs;
+  }
+
+  .attention-chip {
+    @apply inline-flex items-center gap-1 rounded-full border border-border bg-surface-raised
+      px-2 py-0.5 font-mono text-xs text-negative hover:bg-surface-hover;
+  }
+
+  .budget-table th:first-child,
+  .budget-table td:first-child {
+    @apply sticky left-0 z-10 bg-body;
+  }
+
+  .budget-table th:first-child {
+    @apply bg-surface-raised;
+  }
+
+  .budget-row {
+    @apply cursor-pointer hover:bg-surface-hover;
+  }
+
+  .budget-row-active {
+    @apply bg-surface-hover;
+  }
+
+  .budget-group-row td {
+    @apply bg-surface-raised text-xs font-medium uppercase tracking-wide text-text-secondary;
+  }
+
+  .status-dot {
+    @apply inline-block h-2 w-2 shrink-0 rounded-full;
+  }
+
+  .status-green {
+    @apply bg-positive;
+  }
+
+  .status-yellow {
+    @apply bg-warning;
+  }
+
+  .status-red {
+    @apply bg-negative;
+  }
+
+  .budget-rail {
+    @apply absolute inset-y-0 right-0 z-20 w-full max-w-lg translate-x-full overflow-y-auto
+      border-l border-border bg-surface p-6 shadow-2xl transition-transform;
+  }
+
+  .budget-rail-open {
+    @apply translate-x-0;
+  }
+
+  .rail-section {
+    @apply mt-5 border-t border-border-subtle pt-4;
+  }
+
+  .rail-label {
+    @apply mb-3 text-xs font-medium uppercase tracking-wide text-text-secondary;
+  }
+
+  .rail-field {
+    @apply flex flex-col gap-1;
+  }
+
+  .rail-field-label {
+    @apply text-xs text-text-secondary;
+  }
+}

@@ -1,0 +1,158 @@
+{% macro chart_js() %}
+<script src="{{ url_for('static', filename='js/vendor/chart.umd.min.js') }}"></script>
+{% endmacro %}
+
+{% macro form(action, method="post", class="") %}
+<form action="{{ action }}" method="post" class="{{ class }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  {% if method != "post" %}<input type="hidden" name="_method" value="{{ method }}">{% endif %}
+  {{ caller() }}
+</form>
+{% endmacro %}
+
+{% macro hidden_form(action, id, class="") %}
+<form action="{{ action }}" method="post" class="{{ class }}" id="{{ id }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  {{ caller() }}
+</form>
+{% endmacro %}
+
+{% macro button(label, type="submit", variant="", class="") %}
+<button type="{{ type }}" class="btn {{ 'btn-' + variant if variant else '' }} {{ class }}"
+  {% for key, value in kwargs.items() %}{{ key }}="{{ value }}" {% endfor %}>
+  {{ label }}
+</button>
+{% endmacro %}
+
+{% macro toolbar(title, badge_label=None, actions="", controls="", tabs=None, active=None, counts=None, warn_counts=None) %}
+<div class="flex flex-col gap-2">
+  <h1 class="flex items-center gap-2 text-lg font-semibold md:text-xl">
+    {{ title }}
+    {% if badge_label is not none %}<span class="badge">{{ badge_label }}</span>{% endif %}
+  </h1>
+  {% if tabs %}
+  <div class="flex flex-wrap items-center justify-between gap-2">
+    <div class="-ml-2 flex flex-wrap gap-1" role="tablist">
+      {% for id, label in tabs %}
+      <button type="button" class="btn btn-ghost {{ 'tab-active' if id == active else '' }}" data-tab-target="{{ id }}">
+        {{ label }}
+        {% if counts and counts.get(id) is not none %}<span class="text-xs opacity-60" data-tab-count="{{ id }}">{{ counts[id] }}</span>{% endif %}
+        {% if warn_counts and warn_counts.get(id) %}
+        <span class="badge border-warning bg-warning-dim px-1.5 py-0 text-[10px] leading-4 text-warning">{{ warn_counts[id] }}</span>
+        {% endif %}
+      </button>
+      {% endfor %}
+    </div>
+    <div class="-mr-2 flex flex-wrap items-center justify-end gap-1">{{ actions }}{{ controls }}</div>
+  </div>
+  {% elif actions or controls %}
+  <div class="flex flex-wrap items-center justify-between gap-2">
+    <div class="-ml-2 flex flex-wrap items-center gap-1">{{ actions }}</div>
+    <div class="-mr-2 flex flex-wrap items-center justify-end gap-1">{{ controls }}</div>
+  </div>
+  {% endif %}
+</div>
+{% endmacro %}
+
+{% macro icon(name, class="h-4 w-4") %}{% if name == "chevron-left" %}<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="{{ class }}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6l6 6" /></svg>{% elif name == "chevron-right" %}<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="{{ class }}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6l-6 6" /></svg>{% elif name == "plus" %}<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="{{ class }}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5l0 14" /><path d="M5 12l14 0" /></svg>{% elif name == "check" %}<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="{{ class }}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5l10 -10" /></svg>{% elif name == "search" %}<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="{{ class }}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10a7 7 0 1 0 14 0a7 7 0 1 0 -14 0" /><path d="M21 21l-6 -6" /></svg>{% elif name == "download" %}<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="{{ class }}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2 -2v-2" /><path d="M7 11l5 5l5 -5" /><path d="M12 4l0 12" /></svg>{% elif name == "trash" %}<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="{{ class }}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7l16 0" /><path d="M10 11l0 6" /><path d="M14 11l0 6" /><path d="M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2 -2l1 -12" /><path d="M9 7v-3a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v3" /></svg>{% elif name == "external-link" %}<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="{{ class }}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 6h-6a2 2 0 0 0 -2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-6" /><path d="M11 13l9 -9" /><path d="M15 4h5v5" /></svg>{% elif name == "edit" %}<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="{{ class }}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7h-1a2 2 0 0 0 -2 2v9a2 2 0 0 0 2 2h9a2 2 0 0 0 2 -2v-1" /><path d="M20.385 6.585a2.1 2.1 0 0 0 -2.97 -2.97l-8.415 8.385v3h3l8.385 -8.415" /><path d="M16 5l3 3" /></svg>{% elif name == "info" %}<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="{{ class }}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 18 0a9 9 0 0 0 -18 0" /><path d="M12 9h.01" /><path d="M11 12h1v4h1" /></svg>{% elif name == "menu" %}<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="{{ class }}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l16 0" /><path d="M4 12l16 0" /><path d="M4 18l16 0" /></svg>{% elif name == "refresh" %}<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="{{ class }}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8.1 8.1 0 0 0 -15.5 -2m-.5 -4v4h4" /><path d="M4 13a8.1 8.1 0 0 0 15.5 2m.5 4v-4h-4" /></svg>{% elif name == "x" %}<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="{{ class }}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6l-12 12" /><path d="M6 6l12 12" /></svg>{% elif name == "filter" %}<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="{{ class }}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v2.172a2 2 0 0 1 -.586 1.414l-4.414 4.414v7l-6 2v-8.5l-4.48 -4.928a2 2 0 0 1 -.52 -1.345v-2.227z" /></svg>{% elif name == "exchange" %}<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="{{ class }}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 10h14l-4 -4" /><path d="M17 14h-14l4 4" /></svg>{% elif name == "split" %}<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="{{ class }}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 17h-8l-3.5 -5h-6.5" /><path d="M21 7h-8l-3.495 5" /><path d="M18 10l3 -3l-3 -3" /><path d="M18 20l3 -3l-3 -3" /></svg>{% elif name == "calendar" %}<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="{{ class }}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2v-12z" /><path d="M16 3v4" /><path d="M8 3v4" /><path d="M4 11h16" /></svg>{% elif name == "play" %}<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="{{ class }}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4v16l13 -8z" /></svg>{% elif name == "priority" %}<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="{{ class }}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l7 0" /><path d="M4 12l7 0" /><path d="M4 18l9 0" /><path d="M15 9l3 -3l3 3" /><path d="M18 6l0 12" /></svg>{% elif name == "click" %}<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="{{ class }}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12l3 0" /><path d="M12 3l0 3" /><path d="M7.8 7.8l-2.2 -2.2" /><path d="M16.2 7.8l2.2 -2.2" /><path d="M7.8 16.2l-2.2 2.2" /><path d="M12 12l9 3l-4 2l-2 4l-3 -9" /></svg>{% elif name == "arrow-right" %}<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="{{ class }}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l14 0" /><path d="M13 18l6 -6" /><path d="M13 6l6 6" /></svg>{% endif %}{% endmacro %}
+
+{% macro master_detail(list, detail, grid_class="md:grid-cols-2", height_class="md:h-[34rem]", outer_class="") %}
+<div class="grid grid-cols-1 overflow-hidden rounded-lg border border-border {{ grid_class }} {{ outer_class }}">
+  <div class="min-w-0 overflow-y-auto {{ height_class }}">{{ list }}</div>
+  <div class="flex min-w-0 flex-col border-t border-border {{ height_class }} md:border-t-0 md:border-l">{{ detail }}</div>
+</div>
+{% endmacro %}
+
+{% macro list_row(href, icon_name, selected=False, meta="") %}
+<a href="{{ href }}" class="list-row {{ 'list-row-active' if selected else '' }}">
+  <span class="list-row-icon">{{ icon(icon_name) }}</span>
+  <span class="min-w-0 flex-1">{{ caller() }}</span>
+  {% if meta %}<span class="shrink-0 text-right">{{ meta }}</span>{% endif %}
+</a>
+{% endmacro %}
+
+{% macro inspector_header(title, actions="") %}
+<div class="flex shrink-0 items-center justify-between gap-3 px-3 py-2">
+  <span class="truncate text-sm font-medium">{{ title }}</span>
+  <span class="flex shrink-0 items-center gap-1">{{ actions }}</span>
+</div>
+{% endmacro %}
+
+{% macro empty_state(message) %}
+<div class="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-text-secondary">
+  {{ icon("click", "h-8 w-8 opacity-40") }}
+  <span class="text-sm">{{ message }}</span>
+</div>
+{% endmacro %}
+
+{% macro test_panel(summary) %}
+<div class="mt-4 overflow-hidden rounded-md border border-border-subtle">
+  <div class="flex items-center gap-2 border-b border-border-subtle bg-surface-raised px-3 py-2 text-xs text-text-secondary">
+    {{ icon("play", "h-3.5 w-3.5 text-accent") }} {{ summary }}
+  </div>
+  <div class="max-h-64 overflow-y-auto">{{ caller() }}</div>
+</div>
+{% endmacro %}
+
+{% macro period_picker(label, prev_action, next_action, prev_fields={}, next_fields={}) %}
+<div class="flex items-center gap-0.5">
+  <form method="post" action="{{ prev_action }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    {% for k, v in prev_fields.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+    <button type="submit" class="btn btn-ghost btn-icon" aria-label="Previous month">{{ icon("chevron-left") }}</button>
+  </form>
+  <span class="min-w-24 px-1 text-center text-sm font-medium">{{ label }}</span>
+  <form method="post" action="{{ next_action }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    {% for k, v in next_fields.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+    <button type="submit" class="btn btn-ghost btn-icon" aria-label="Next month">{{ icon("chevron-right") }}</button>
+  </form>
+</div>
+{% endmacro %}
+
+{% macro badge(label, class="") %}
+<span class="badge {{ class }}">{{ label }}</span>
+{% endmacro %}
+
+
+{% macro tab_panel(id, active) %}
+<div class="{{ '' if id == active else 'hidden' }}" data-tab-panel="{{ id }}">
+  {{ caller() }}
+</div>
+{% endmacro %}
+
+{% macro modal(id, title) %}
+<dialog id="{{ id }}" class="modal">
+  <div class="mb-4 flex items-center justify-between gap-3">
+    <h2 class="text-base font-semibold">{{ title }}</h2>
+    <button type="button" class="btn btn-ghost btn-icon" data-modal-close aria-label="Close">{{ icon("x") }}</button>
+  </div>
+  {{ caller() }}
+</dialog>
+{% endmacro %}
+
+{% macro amount(cents, mask=False) %}
+<span class="mono {{ 'amount-negative' if cents < 0 else 'amount-positive' }} {{ 'amount-mask' if mask else '' }}">
+  {{ (cents / 100)|money }}
+</span>
+{% endmacro %}
+
+{% macro select(name, options, selected=None, class="") %}
+<select name="{{ name }}" class="input {{ class }}"
+  {% for key, value in kwargs.items() %}{{ key }}="{{ value }}" {% endfor %}>
+  {% for opt_value, opt_label in options %}
+    <option value="{{ opt_value }}" {{ "selected" if opt_value == selected else "" }}>{{ opt_label }}</option>
+  {% endfor %}
+</select>
+{% endmacro %}
+
+{% macro object_select(name, items, selected=None, value_field="id", label_field="name", class="") %}
+<select name="{{ name }}" class="input {{ class }}"
+  {% for key, value in kwargs.items() %}{{ key }}="{{ value }}" {% endfor %}>
+  {% for item in items %}
+    <option value="{{ item[value_field] }}" {{ "selected" if item[value_field] == selected else "" }}>
+      {{ item[label_field] }}
+    </option>
+  {% endfor %}
+</select>
+{% endmacro %}

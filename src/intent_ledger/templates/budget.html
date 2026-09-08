@@ -1,0 +1,264 @@
+{% extends "layout.html" %}
+{% from "partials/elements.html" import toolbar, icon, chart_js %}
+{% block title %}Intent: Budget{% endblock %}
+
+{% set primary = budget.primary_period %}
+{% set column_count = 4 %}
+
+{% macro total_span(key, value) %}
+<span class="mono" data-total="{{ key }}" data-value="{{ '%.2f'|format(value) }}">{{ value|money }}</span>
+{% endmacro %}
+
+{% block toolbar %}
+  {% set actions %}
+    <button type="submit" form="budget-form" name="action" value="save" class="btn btn-ghost text-accent">
+      {{ icon("check") }} Save budget
+    </button>
+    <button type="submit" form="budget-form" name="action" value="today" class="btn btn-ghost">
+      {{ icon("calendar") }} This month
+    </button>
+  {% endset %}
+  {% set controls %}
+    <div class="flex flex-wrap items-center gap-1">
+      <div class="flex items-center gap-0.5">
+        <button type="submit" form="budget-form" name="action" value="previous"
+          class="btn btn-ghost btn-icon" aria-label="Previous month">{{ icon("chevron-left") }}</button>
+        <span class="min-w-24 px-1 text-center text-sm font-medium">{{ budget.periods[0].label }}</span>
+        <button type="submit" form="budget-form" name="action" value="next"
+          class="btn btn-ghost btn-icon" aria-label="Next month">{{ icon("chevron-right") }}</button>
+      </div>
+      <select class="input w-36" data-bulk-fill aria-label="Fill all categories">
+        <option value="">Fill all&hellip;</option>
+        <option value="last">Last month</option>
+        <option value="avg3">3-month average</option>
+        <option value="goal">Goal</option>
+        <option value="zero">Zero</option>
+      </select>
+    </div>
+  {% endset %}
+  {{ toolbar("Budget", actions=actions, controls=controls) }}
+{% endblock %}
+
+{% block content %}
+  <div class="budget-hero">
+    <div class="stat-tile">
+      <div class="stat-tile-label">Budget</div>
+      <div class="stat-tile-value">{{ total_span("assigned", budget.totals[primary].assigned) }}</div>
+    </div>
+    <div class="stat-tile">
+      <div class="stat-tile-label">Actual</div>
+      <div class="stat-tile-value">{{ total_span("actual", -budget.totals[primary].actual) }}</div>
+    </div>
+    <div class="stat-tile">
+      <div class="stat-tile-label">Left</div>
+      <div class="stat-tile-value">{{ total_span("left", budget.totals[primary].left) }}</div>
+    </div>
+    <div class="stat-tile">
+      <div class="stat-tile-label">To budget</div>
+      <div class="stat-tile-value {{ 'amount-negative' if budget.to_budget < 0 else 'amount-positive' }}">
+        {{ total_span("to_budget", budget.to_budget) }}
+      </div>
+    </div>
+  </div>
+
+  {% if budget.over_budget %}
+  <div class="attention-strip">
+    <span class="text-text-secondary">Over budget</span>
+    {% for item in budget.over_budget %}
+    <a href="#cat-{{ item.id }}" class="attention-chip">{{ item.name }} {{ item.left|money }}</a>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <form method="post" action="{{ url_for('budget.budget_post') }}" id="budget-form" data-budget>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+    <div class="relative overflow-hidden">
+    <div class="table-wrap">
+      <table class="budget-table">
+        <thead>
+          <tr>
+            <th>Category</th>
+            <th class="text-right">Assigned</th>
+            <th class="text-right">Spent</th>
+            <th class="text-right">Left</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for group in budget.groups %}
+            {% if budget.groups|length > 1 %}
+            <tr class="budget-group-row">
+              <td>{{ group.name }}</td>
+              <td class="text-right">{{ group.by_period[primary].assigned|money }}</td>
+              <td class="text-right">{{ (-group.by_period[primary].actual)|money }}</td>
+              <td class="text-right">{{ group.by_period[primary].left|money }}</td>
+            </tr>
+            {% endif %}
+
+            {% for row in budget.rows if row.group_name == group.name %}
+            {% set cell = row.by_period[primary] %}
+            <tr class="budget-row group" id="cat-{{ row.id }}" data-row="{{ row.id }}">
+              <td>
+                <span class="flex items-center gap-2">
+                  <span class="status-dot status-{{ row.status_color }}" title="{{ row.status_text }}"></span>
+                  <span class="truncate group-hover:underline underline-offset-2">{{ row.name }}</span>
+                </span>
+              </td>
+              <td class="text-right">
+                <input
+                  type="number"
+                  step="0.01"
+                  name="budget_{{ row.id }}"
+                  value="{{ '%.2f'|format(cell.assigned) }}"
+                  class="input w-28 text-right"
+                  data-budget-input
+                  data-row="{{ row.id }}"
+                  data-assigned="{{ '%.2f'|format(cell.assigned) }}"
+                  data-last="{{ '%.2f'|format(row.presets.last) }}"
+                  data-avg3="{{ '%.2f'|format(row.presets.avg3) }}"
+                  data-goal="{{ '%.2f'|format(row.presets.goal) if row.presets.goal is defined else '' }}"
+                  data-carry-in="{{ '%.2f'|format(row.carry_in) }}"
+                  data-actual="{{ '%.2f'|format(cell.actual) }}"
+                >
+              </td>
+              <td class="text-right mono group-hover:underline underline-offset-2">{{ (-cell.actual)|money }}</td>
+              <td class="text-right">
+                <span class="mono group-hover:underline underline-offset-2 {{ 'amount-negative' if row.rollover < 0 else 'amount-positive' }}"
+                  data-row-left="{{ row.id }}" data-value="{{ '%.2f'|format(row.rollover) }}">
+                  {{ row.rollover|money }}
+                </span>
+              </td>
+            </tr>
+            {% endfor %}
+          {% else %}
+          <tr>
+            <td colspan="{{ column_count }}" class="text-center text-text-secondary py-6">
+              No budget categories yet. Mark an expense account as budgetable in Mappings.
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+        {% if budget.rows %}
+        <tfoot>
+          <tr class="font-medium">
+            <td>Total</td>
+            <td class="text-right">{{ total_span("assigned", budget.totals[primary].assigned) }}</td>
+            <td class="text-right">{{ total_span("actual", -budget.totals[primary].actual) }}</td>
+            <td class="text-right">{{ total_span("rollover", budget.rollover_total) }}</td>
+          </tr>
+        </tfoot>
+        {% endif %}
+      </table>
+    </div>
+
+    <aside class="budget-rail" data-rail aria-label="Category detail">
+      <div class="flex items-center justify-between gap-3">
+        <span class="text-sm font-medium" data-rail-title>Category</span>
+        <button type="button" class="btn btn-ghost btn-icon" data-rail-close aria-label="Close">{{ icon("x") }}</button>
+      </div>
+
+      {% for row in budget.rows %}
+      <div class="hidden" data-rail-block="{{ row.id }}" data-name="{{ row.name }}">
+        <div class="mt-4 flex items-center gap-2 text-sm">
+          <span class="status-dot status-{{ row.status_color }}"></span>
+          {{ row.status_text }}
+        </div>
+
+        {% if row.pace %}
+        <div class="mt-1 text-xs text-text-secondary">
+          Spent {{ "%.0f"|format(row.pace.spent_fraction * 100) }}% of budget,
+          {{ "%.0f"|format(row.pace.elapsed_fraction * 100) }}% of the month elapsed.
+        </div>
+        {% endif %}
+
+        <div class="rail-section">
+          <div class="rail-label">6-month spend</div>
+          <div class="h-32">
+            <canvas data-chart='{{ {
+              "labels": row.trend.labels,
+              "datasets": [{"label": row.name, "data": row.trend.amounts, "color": status_hex[row.status_color]}]
+            } | tojson }}' data-chart-type="bar" data-chart-tooltip="off" data-chart-axes="on"></canvas>
+          </div>
+        </div>
+
+        <div class="rail-section">
+          <div class="rail-label">Goal</div>
+          <div class="flex flex-wrap items-end gap-3">
+            <div class="rail-field">
+              <label class="rail-field-label" for="goal_amount_{{ row.id }}">Target</label>
+              <input type="number" step="0.01" id="goal_amount_{{ row.id }}" name="goal_amount_{{ row.id }}"
+                class="input w-32 text-right" placeholder="0.00"
+                value="{{ '%.2f'|format(row.goal.target) if row.goal else '' }}">
+            </div>
+            <div class="rail-field">
+              <label class="rail-field-label" for="goal_date_{{ row.id }}">By date (optional)</label>
+              <input type="date" id="goal_date_{{ row.id }}" name="goal_date_{{ row.id }}" class="input"
+                value="{{ row.goal.target_date or '' }}">
+            </div>
+            <div class="flex items-center gap-1">
+              <button type="submit" name="action" value="save_goal:{{ row.id }}" class="btn btn-ghost text-accent">
+                {{ icon("check") }} Save
+              </button>
+              {% if row.goal %}
+              <button type="submit" name="action" value="delete_goal:{{ row.id }}" class="btn btn-ghost text-negative" aria-label="Delete goal">
+                {{ icon("trash") }}
+              </button>
+              {% endif %}
+            </div>
+          </div>
+          {% if row.presets.goal is defined %}
+          <div class="mt-3 text-xs text-text-secondary">
+            Suggested monthly: <span class="mono">{{ row.presets.goal|money }}</span>
+          </div>
+          {% endif %}
+        </div>
+
+        <div class="rail-section">
+          <div class="rail-label">Move money</div>
+          <div class="flex flex-wrap items-end gap-3">
+            <div class="rail-field">
+              <label class="rail-field-label" for="move_amount_{{ row.id }}">Amount</label>
+              <input type="number" step="0.01" id="move_amount_{{ row.id }}" name="move_amount_{{ row.id }}"
+                class="input w-28 text-right" placeholder="0.00">
+            </div>
+            <div class="rail-field min-w-40 flex-1">
+              <label class="rail-field-label" for="move_to_{{ row.id }}">To category</label>
+              <select id="move_to_{{ row.id }}" name="move_to_{{ row.id }}" class="input">
+                {% for other in budget.rows if other.id != row.id %}
+                <option value="{{ other.id }}">{{ other.name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <button type="submit" name="action" value="move_budget:{{ row.id }}" class="btn btn-ghost">
+              {{ icon("exchange") }} Move
+            </button>
+          </div>
+          <div class="mt-3 text-xs text-text-secondary">
+            Carry-in <span class="mono">{{ row.carry_in|money }}</span>
+          </div>
+        </div>
+
+        <div class="rail-section">
+          <div class="rail-label">Recent transactions</div>
+          {% for txn in row.recent_transactions %}
+          <div class="flex items-center justify-between gap-3 py-1.5 text-sm">
+            <span class="truncate">{{ txn.description }}</span>
+            <span class="shrink-0 text-xs text-text-secondary">{{ txn.posted_date }}</span>
+            <span class="mono shrink-0">{{ txn.amount|money }}</span>
+          </div>
+          {% else %}
+          <div class="py-1 text-xs text-text-secondary">Nothing this month.</div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endfor %}
+    </aside>
+    </div>
+  </form>
+{% endblock %}
+
+{% block scripts %}
+{{ chart_js() }}
+<script src="{{ url_for('static', filename='js/services/charts.js') }}"></script>
+<script src="{{ url_for('static', filename='js/budget.js') }}"></script>
+{% endblock %}

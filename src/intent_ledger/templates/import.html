@@ -1,0 +1,135 @@
+{% extends "layout.html" %}
+{% from "partials/elements.html" import toolbar, icon, modal %}
+{% block title %}Intent: Import{% endblock %}
+
+{% block toolbar %}
+  {% set actions %}
+    {% if pending %}
+    <form method="post" action="{{ url_for('dashboard.refresh') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="btn btn-ghost text-accent">{{ icon("refresh") }} Import all &amp; rebuild ledger</button>
+    </form>
+    {% endif %}
+  {% endset %}
+  {% set controls %}
+    <select name="parser_slug" id="parser_slug" class="input w-44 sm:w-56">
+      {% for parser in parsers %}
+      <option value="{{ parser.slug }}">{{ parser.display_name }}</option>
+      {% endfor %}
+    </select>
+    <button type="button" class="btn btn-ghost btn-icon" data-modal-open="format-info-modal" aria-label="Format details">
+      {{ icon("info") }}
+    </button>
+  {% endset %}
+  {{ toolbar("Import statements", actions=actions, controls=controls) }}
+{% endblock %}
+
+{% block content %}
+  {% call modal("format-info-modal", "Canonical import format") %}
+    <p class="mb-3 text-sm text-text-secondary">
+      Export your statement as CSV, XLS, or XLSX with these columns. Column names are case-insensitive and extra
+      columns are ignored.
+    </p>
+    <div class="table-wrap mb-3">
+      <table>
+        <thead>
+          <tr>
+            <th class="mono">date</th>
+            <th class="mono">description</th>
+            <th class="mono">withdrawal</th>
+            <th class="mono">deposit</th>
+            <th class="mono">balance</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="mono">2026-01-05</td>
+            <td>COFFEE SHOP</td>
+            <td class="mono">4.50</td>
+            <td class="mono"></td>
+            <td class="mono">995.50</td>
+          </tr>
+          <tr>
+            <td class="mono">2026-01-06</td>
+            <td>PAYCHECK</td>
+            <td class="mono"></td>
+            <td class="mono">1500.00</td>
+            <td class="mono">2495.50</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <ul class="flex flex-col gap-1.5 text-xs text-text-secondary">
+      <li><span class="mono text-text">date</span>: ISO format YYYY-MM-DD. Required.</li>
+      <li><span class="mono text-text">description</span>: free text. Required.</li>
+      <li><span class="mono text-text">withdrawal</span> / <span class="mono text-text">deposit</span>: exactly one filled per row, never both.</li>
+      <li><span class="mono text-text">balance</span>: optional but recommended. Improves duplicate detection when a statement is re-imported.</li>
+    </ul>
+  {% endcall %}
+
+  <h2 class="mb-2 text-sm font-medium text-text-secondary">Drop a statement onto its account</h2>
+  <div class="mb-6 divide-y divide-border-subtle overflow-hidden rounded-lg border border-border" id="dropzone-list">
+    <div class="bg-surface-raised p-2">
+      <input type="search" id="account-search" class="input" placeholder="Search accounts..." autocomplete="off">
+    </div>
+    {% for account in accounts %}
+    <form method="post" action="{{ url_for('import.import_upload') }}" enctype="multipart/form-data"
+          class="dropzone-row flex items-center justify-between gap-3 px-3 py-2 text-sm"
+          data-dropzone data-account-name="{{ account.name | lower }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="account_id" value="{{ account.id }}">
+      <input type="hidden" name="parser_slug" value="{{ parsers[0].slug if parsers else '' }}" data-parser-slug-field>
+      <input type="file" name="statements" multiple hidden accept=".csv,.xls,.xlsx" data-dropzone-input>
+      <span class="flex items-center gap-2">
+        {{ icon("download", "h-4 w-4 shrink-0") }}
+        <span class="font-medium text-text">{{ account.name }}</span>
+      </span>
+      <span class="shrink-0 text-xs">Drop or click to browse</span>
+    </form>
+    {% else %}
+    <div class="p-4 text-center text-text-secondary">No accounts yet. Add one from the Accounts page first.</div>
+    {% endfor %}
+    <p class="hidden p-4 text-center text-text-secondary" id="dropzone-no-matches">No accounts match your search.</p>
+  </div>
+
+  <h2 class="mb-2 text-sm font-medium text-text-secondary">Pending statements</h2>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>File</th>
+          <th>Account</th>
+          <th>Uploaded</th>
+          <th>Source</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for statement in pending %}
+        <tr>
+          <td class="mono">{{ statement.name }}</td>
+          <td>{{ statement.account_name or "-" }}</td>
+          <td>{{ statement.when }}</td>
+          <td>{{ statement.source or "-" }}</td>
+          <td class="text-right">
+            <form method="post" action="{{ url_for('import.import_delete', filename=statement.name) }}"
+                  data-confirm="Remove this statement?">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="btn btn-danger">Remove</button>
+            </form>
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="5" class="py-6 text-center text-text-secondary">No pending statements.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/services/import.js') }}"></script>
+{% endblock %}

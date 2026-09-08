@@ -1,0 +1,53 @@
+{% extends "layout.html" %}
+{% from "partials/elements.html" import toolbar, icon %}
+{% block title %}Intent: Settings{% endblock %}
+
+{% block toolbar %}
+  {% set actions %}
+    <button type="submit" form="settings-form" class="btn btn-ghost text-accent">
+      {{ icon("check") }} Save settings
+    </button>
+  {% endset %}
+  {{ toolbar("Settings", actions=actions) }}
+{% endblock %}
+
+{% block content %}
+  <form method="post" action="{{ url_for('settings.settings_save') }}" id="settings-form"
+        class="panel flex flex-col gap-4">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+    <div>
+      <label class="mb-1 block text-xs text-text-secondary" for="timezone">Timezone</label>
+      <input type="text" name="timezone" id="timezone" class="input max-w-sm" list="timezone-options"
+             value="{{ timezone }}" autocomplete="off" required
+             {{ "data-detect-timezone" if timezone_is_default else "" }}>
+      <datalist id="timezone-options">
+        {% for zone in timezone_options %}
+        <option value="{{ zone }}"></option>
+        {% endfor %}
+      </datalist>
+    </div>
+
+    <div>
+      <label class="mb-1 block text-xs text-text-secondary" for="base_currency">Base currency</label>
+      <input type="text" name="base_currency" id="base_currency" class="input mono max-w-sm"
+             value="{{ base_currency }}" maxlength="16" autocomplete="off" required>
+    </div>
+
+    <div>
+      <label class="mb-1 block text-xs text-text-secondary" for="export_format">Export format</label>
+      <select name="export_format" id="export_format" class="input max-w-sm">
+        <option value="xlsx" {{ "selected" if export_format == "xlsx" else "" }}>XLSX (formatted workbook)</option>
+        <option value="csv" {{ "selected" if export_format == "csv" else "" }}>CSV (one file per sheet, zipped)</option>
+      </select>
+    </div>
+  </form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const timezoneField = document.querySelector("[data-detect-timezone]");
+  const localZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  if (timezoneField && localZone) timezoneField.value = localZone;
+</script>
+{% endblock %}

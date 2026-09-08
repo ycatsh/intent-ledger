@@ -1,0 +1,40 @@
+name: Bug report
+description: Something is broken or behaving incorrectly.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this. If this bug could expose
+        someone's financial data (not just a local glitch), please use
+        private vulnerability reporting instead (Security tab -> Report a
+        vulnerability) rather than filing a public issue.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: A concise description of the bug and what you expected to happen.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include sample data if you can (never include a real statement).
+    validations:
+      required: true
+
+  - type: input
+    attributes:
+      label: Version
+      description: What version of intent-ledger are you using? (see `intent-ledger --version`)
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs or traceback
+      render: shell

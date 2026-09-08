@@ -1,0 +1,41 @@
+{% extends "layout.html" %}
+{% from "partials/elements.html" import toolbar, chart_js %}
+{% block title %}Intent: Charts{% endblock %}
+
+{% block toolbar %}
+  {{ toolbar("Charts") }}
+{% endblock %}
+
+{% block content %}
+  {% set panels = [
+    ("net_worth", "Net worth", "line", "Last 12 months"),
+    ("spend_pace", "Spend pace vs. last month", "line", "This month vs last month"),
+    ("cashflow", "Cashflow", "line", "Last 6 months"),
+    ("spend_flexibility", "Recurring vs. discretionary spend", "line", "Last 12 months"),
+    ("category_pace", "Category pace", "bar", "Categories off their normal pace"),
+    ("account_balances", "Account balances", "line", "Last 12 months"),
+  ] %}
+
+  <div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
+    {% for key, title, chart_type, subtitle in panels %}
+    <div class="panel chart-card">
+      <div class="mb-3 flex items-start justify-between gap-3">
+        <div>
+          <div class="text-xs font-semibold uppercase tracking-wide text-text-secondary">{{ title }}</div>
+          <div class="text-xs text-muted">{{ subtitle }}</div>
+        </div>
+        <div class="mono text-lg font-semibold text-positive" data-chart-value></div>
+      </div>
+      <div class="relative h-40">
+        <canvas data-chart='{{ charts[key] | tojson }}' data-chart-type="{{ chart_type }}"></canvas>
+      </div>
+      <div class="mt-3 flex flex-wrap items-center justify-center gap-4" data-chart-legend></div>
+    </div>
+    {% endfor %}
+  </div>
+{% endblock %}
+
+{% block scripts %}
+{{ chart_js() }}
+<script src="{{ url_for('static', filename='js/services/charts.js') }}"></script>
+{% endblock %}

@@ -1,0 +1,103 @@
+{% extends "layout.html" %}
+{% from "partials/elements.html" import toolbar, icon %}
+{% block title %}Intent: {{ account.name }}{% endblock %}
+
+{% block toolbar %}
+  {% set actions %}
+    <a class="btn btn-ghost" href="{{ origin or url_for('accounts.accounts', account_id=account_id) }}">
+      {{ icon("chevron-left") }} Back
+    </a>
+  {% endset %}
+  {{ toolbar(account.name, actions=actions) }}
+{% endblock %}
+
+{% block content %}
+  <div class="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
+    <div class="panel">
+      <div class="text-xs text-text-secondary">Net</div>
+      <div class="mono text-lg {{ 'amount-negative' if account.net < 0 else 'amount-positive' }}">
+        {{ account.net|money }}
+      </div>
+    </div>
+    <div class="panel">
+      <div class="text-xs text-text-secondary">In</div>
+      <div class="mono text-lg amount-positive">{{ account.in_total|money }}</div>
+      <div class="text-xs text-text-secondary">{{ account.in_count }} transactions</div>
+    </div>
+    <div class="panel">
+      <div class="text-xs text-text-secondary">Out</div>
+      <div class="mono text-lg amount-negative">{{ account.out_total|money }}</div>
+      <div class="text-xs text-text-secondary">{{ account.out_count }} transactions</div>
+    </div>
+    <div class="panel">
+      <div class="text-xs text-text-secondary">Avg / month</div>
+      <div class="mono text-lg">{{ account.avg_month|money }}</div>
+    </div>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Date</th>
+          {% if not account_id %}<th>Account</th>{% endif %}
+          <th>Payee</th>
+          <th>Category</th>
+          <th class="text-right">Amount</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for txn in recent_transactions %}
+        {% set split_key = "split-" ~ txn.transaction_hash %}
+        <tr>
+          <td class="whitespace-nowrap">{{ txn.date }}</td>
+          {% if not account_id %}<td class="truncate">{{ txn.account_name or "-" }}</td>{% endif %}
+          <td class="truncate" title="{{ txn.payee or '' }}">{{ txn.payee or "-" }}</td>
+          <td class="truncate" title="{{ txn.category or '' }}">
+            {% if txn.has_split %}
+            <button type="button" data-reveal-group="{{ split_key }}" aria-expanded="false"
+                    class="inline-flex items-center gap-1 text-text-secondary hover:text-text">
+              {{ txn.splits|length }} Splits
+              <span class="inline-flex transition-transform" data-reveal-chevron>{{ icon("chevron-right", "h-3 w-3") }}</span>
+            </button>
+            {% elif txn.category_account_id %}
+            <a class="link-subtle" href="{{ url_for('accounts.account_view', account_id=txn.category_account_id, return_to=here) }}">{{ txn.category }}</a>
+            {% else %}
+            {{ txn.category or "-" }}
+            {% endif %}
+          </td>
+          <td class="text-right mono {{ 'amount-negative' if txn.amount < 0 else 'amount-positive' }}">
+            {{ txn.amount|money }}
+          </td>
+          <td class="text-right whitespace-nowrap">
+            <a class="btn btn-ghost btn-icon"
+               href="{{ url_for('rules.rules', transaction_hash=txn.transaction_hash, tab='overrides', return_to=here) }}"
+               aria-label="Recategorize or split">
+              {{ icon("split") }}
+            </a>
+          </td>
+        </tr>
+        {% for split in txn.splits if txn.has_split %}
+        <tr class="hidden bg-surface-raised" data-reveal-target="{{ split_key }}">
+          <td></td>
+          {% if not account_id %}<td></td>{% endif %}
+          <td class="truncate text-text-secondary" title="{{ split.note or '' }}">{{ split.note or txn.payee or "-" }}</td>
+          <td class="truncate">
+            <a class="link-subtle" href="{{ url_for('accounts.account_view', account_id=split.account_id, return_to=here) }}">{{ split.account }}</a>
+          </td>
+          <td class="text-right mono {{ 'amount-negative' if split.amount < 0 else 'amount-positive' }}">
+            {{ split.amount|money }}
+          </td>
+          <td></td>
+        </tr>
+        {% endfor %}
+        {% else %}
+        <tr>
+          <td colspan="{{ 6 if not account_id else 5 }}" class="py-6 text-center text-text-secondary">No transactions.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% endblock %}

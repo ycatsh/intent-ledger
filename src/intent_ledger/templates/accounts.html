@@ -1,0 +1,338 @@
+{% extends "layout.html" %}
+{% from "partials/elements.html" import toolbar, icon, modal, master_detail %}
+{% block title %}Intent: Accounts{% endblock %}
+
+{% block toolbar %}
+  {% set actions %}
+    <a class="btn btn-ghost" href="{{ url_for('accounts.accounts_export', account_id=selected_account_id, search=filters.search) }}">
+      {{ icon("download") }} Export
+    </a>
+    <button type="button" class="btn btn-ghost text-accent" data-reveal="new-transaction-row">
+      {{ icon("plus") }} Add transaction
+    </button>
+    <button type="button" class="btn btn-ghost text-accent" data-modal-open="add-account-modal">
+      {{ icon("plus") }} Add account
+    </button>
+    <details class="relative" data-column-menu>
+      <summary class="btn btn-ghost">{{ icon("filter") }} Columns</summary>
+      <div class="mtoolbar-menu left-0 right-auto flex w-44 flex-col">
+        {% for key, label in [("payee", "Payee"), ("account", "Account"), ("projects", "Projects"), ("counterparty", "Counterparty")] %}
+        <label class="flex items-center gap-2 rounded px-2 py-1 text-sm hover:bg-surface-hover">
+          <input type="checkbox" data-column-toggle="{{ key }}">
+          {{ label }}
+        </label>
+        {% endfor %}
+      </div>
+    </details>
+  {% endset %}
+  {% set controls %}
+    <form method="get" action="{{ url_for('accounts.accounts') }}" class="flex gap-2">
+      <input type="hidden" name="account_id" value="{{ selected_account_id }}">
+      <input type="search" name="search" value="{{ filters.search }}" placeholder="Search transactions..." class="input max-w-xs">
+      <button type="submit" class="btn btn-ghost btn-icon" aria-label="Search">{{ icon("search") }}</button>
+    </form>
+    <button type="button" class="btn btn-ghost btn-icon" data-modal-open="search-help-modal" aria-label="Search tips">
+      {{ icon("info") }}
+    </button>
+  {% endset %}
+  {{ toolbar("Accounts", actions=actions, controls=controls) }}
+{% endblock %}
+
+{% macro sort_header(label, keys, class="", col="") %}
+  {% set current = filters.sort or "date_desc" %}
+  {% set next = keys[1] if current == keys[0] and keys|length > 1 else keys[0] %}
+  <th class="{{ class }}" {{ ('data-col=' ~ col) if col else "" }}>
+    <a class="inline-flex items-center gap-1 whitespace-nowrap text-text-secondary hover:text-text"
+       href="{{ url_for('accounts.accounts', account_id=selected_account_id, search=filters.search, sort=next) }}">
+      {{ label }}
+      {% if current in keys %}
+      <span class="text-accent">{{ icon("chevron-right", "h-3 w-3 " ~ ("rotate-90" if current == keys[0] else "-rotate-90")) }}</span>
+      {% endif %}
+    </a>
+  </th>
+{% endmacro %}
+
+{% macro balance_group(label, group_accounts) %}
+  {% if group_accounts %}
+  <div class="border-b border-border-subtle bg-surface px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-text-secondary">
+    {{ label }}
+  </div>
+  {% for account in group_accounts %}
+  <a href="{{ url_for('accounts.accounts', account_id=account.id) }}" class="list-row {{ 'list-row-active' if account.id == selected_account_id else '' }}">
+    <span class="min-w-0 flex-1 truncate">{{ account.name }}</span>
+    <span class="mono shrink-0 text-xs {{ 'amount-negative' if account.balance < 0 else 'amount-positive' }}">{{ account.balance | money }}</span>
+  </a>
+  {% endfor %}
+  <div class="flex items-center justify-between border-b border-border-subtle bg-surface px-3 py-1.5 text-xs text-text-secondary">
+    <span>Total {{ label|lower }}</span>
+    <span class="mono">{{ (group_accounts | sum(attribute="balance")) | money }}</span>
+  </div>
+  {% endif %}
+{% endmacro %}
+
+{% block content %}
+  {% set assets = accounts | selectattr("type", "equalto", "asset") | list %}
+  {% set equity = accounts | selectattr("type", "equalto", "equity") | list %}
+  {% set liabilities = accounts | selectattr("type", "equalto", "liability") | list %}
+  {% set grand_total = accounts | sum(attribute="balance") %}
+  {% set selected_account = accounts | selectattr("id", "equalto", selected_account_id) | first %}
+
+  {% call modal("search-help-modal", "Searching the ledger") %}
+    <p class="mb-3 text-sm text-text-secondary">
+      Plain words match the payee, category, date, or amount. Add
+      <span class="text-text">field:value</span> filters to narrow it further; every filter has to match.
+    </p>
+    <div class="table-wrap mb-3">
+      <table>
+        <tbody>
+          <tr><td class="mono">payee:coffee</td><td class="text-text-secondary">Payee contains "coffee"</td></tr>
+          <tr><td class="mono">category:groceries</td><td class="text-text-secondary">Posted to a category containing "groceries"</td></tr>
+          <tr><td class="mono">amount&gt;50</td><td class="text-text-secondary">Absolute amount over 50 (also &lt; &gt;= &lt;= :)</td></tr>
+          <tr><td class="mono">amt:12.50</td><td class="text-text-secondary">Short form of amount</td></tr>
+          <tr><td class="mono">date&gt;=05/01/2026</td><td class="text-text-secondary">Posted on or after 5 January 2026 (day/month/year)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="text-xs text-text-secondary">
+      Combine them: <span class="mono text-text">payee:amazon amount&gt;100 date&gt;=01/01/2026</span>
+    </p>
+  {% endcall %}
+
+  {% call modal("add-account-modal", "Add account") %}
+    <form method="post" action="{{ url_for('accounts.accounts_new') }}" class="flex flex-col gap-3">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div>
+        <label class="mb-1 block text-xs text-text-secondary" for="new_account_name">Name</label>
+        <input type="text" name="name" id="new_account_name" class="input" required>
+      </div>
+      <div>
+        <label class="mb-1 block text-xs text-text-secondary" for="new_account_type">Type</label>
+        <select name="type" id="new_account_type" class="input">
+          <option value="asset">asset</option>
+          <option value="liability">liability</option>
+        </select>
+      </div>
+      <button type="submit" class="btn btn-primary mt-1">{{ icon("check") }} Create</button>
+    </form>
+  {% endcall %}
+
+  <form method="post" id="ledger-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="account_id" value="{{ selected_account_id }}">
+    <input type="hidden" name="search" value="{{ filters.search }}">
+    <input type="hidden" name="sort" value="{{ filters.sort or '' }}">
+    <input type="hidden" name="from_account_id" value="{{ selected_account_id }}">
+
+    {% set sidebar %}
+    <div class="{{ 'hidden md:block' if has_explicit_account else '' }}">
+      {{ balance_group("Assets", assets) }}
+      {{ balance_group("Liabilities", liabilities) }}
+      {{ balance_group("Equity", equity) }}
+      <div class="flex items-center justify-between bg-surface-raised px-3 py-2 text-sm font-semibold text-accent">
+        <span>Net worth</span>
+        <span class="mono {{ 'amount-negative' if grand_total < 0 else 'amount-positive' }}">{{ grand_total | money }}</span>
+      </div>
+    </div>
+    {% endset %}
+
+    {% set main %}
+    <div class="{{ 'hidden md:flex' if not has_explicit_account else 'flex' }} h-full flex-col">
+      <a href="{{ url_for('accounts.accounts') }}" class="btn btn-ghost m-2 md:hidden">
+        {{ icon("chevron-left") }} Back to balance sheet
+      </a>
+
+      <div id="project-assign-bar" class="action-bar hidden">
+        <span class="px-1 text-xs text-text-secondary"><span data-selected-count>0</span> selected</span>
+        <input type="text" name="project_name" list="project-assign-options" class="input max-w-40 rounded-full text-xs"
+               placeholder="Project..." autocomplete="off">
+        <datalist id="project-assign-options">
+          {% for project in projects %}
+          <option value="{{ project.name }}"></option>
+          {% endfor %}
+        </datalist>
+        <button type="submit" formaction="{{ url_for('accounts.assign_project') }}" formnovalidate
+                class="btn btn-ghost btn-icon rounded-full text-accent" aria-label="Assign to project">
+          {{ icon("plus") }}
+        </button>
+        <button type="submit" formaction="{{ url_for('accounts.unassign_project') }}" formnovalidate
+                class="btn btn-ghost btn-icon rounded-full text-negative" aria-label="Unassign from project">
+          {{ icon("trash") }}
+        </button>
+
+        <span class="mx-0.5 h-4 w-px bg-border"></span>
+
+        <input type="text" name="counterparty_name" list="counterparty-assign-options" class="input max-w-40 rounded-full text-xs"
+               placeholder="Counterparty..." autocomplete="off">
+        <datalist id="counterparty-assign-options">
+          {% for counterparty in counterparties %}
+          <option value="{{ counterparty.name }}"></option>
+          {% endfor %}
+        </datalist>
+        <button type="submit" formaction="{{ url_for('accounts.assign_counterparty_route') }}" formnovalidate
+                class="btn btn-ghost btn-icon rounded-full text-accent" aria-label="Set counterparty (blank clears it)">
+          {{ icon("check") }}
+        </button>
+      </div>
+
+      <div class="table-wrap flex-1 overflow-auto rounded-none border-0">
+        <table class="ledger-table table-fixed">
+          <colgroup>
+            <col class="w-8">
+            <col class="w-40">
+            <col data-col="payee">
+            <col class="w-56" data-col="account">
+            <col class="w-24" data-col="projects">
+            <col class="w-28" data-col="counterparty">
+            <col class="w-28">
+            <col class="w-20">
+          </colgroup>
+          <thead>
+            <tr>
+              <th><input type="checkbox" id="ledger-select-all" aria-label="Select all transactions"></th>
+              {{ sort_header("Date", ["date_desc", "date_asc"]) }}
+              {{ sort_header("Payee", ["payee"], col="payee") }}
+              {{ sort_header("Account", ["category"], col="account") }}
+              <th data-col="projects">Projects</th>
+              <th data-col="counterparty">Counterparty</th>
+              {{ sort_header("Amount", ["amount_desc", "amount_asc"], class="text-right") }}
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr id="new-transaction-row" class="hidden bg-surface-raised align-middle">
+              <td></td>
+              <td class="py-1.5" data-label="Date"><input type="date" name="posted_date" class="input px-2" value="{{ today }}" required></td>
+              <td class="py-1.5" data-label="Payee" data-col="payee">
+                <input type="text" name="payee_name" list="payee-options" class="input" placeholder="Payee" required>
+                <datalist id="payee-options">
+                  {% for payee in payees %}
+                  <option value="{{ payee.name }}"></option>
+                  {% endfor %}
+                </datalist>
+              </td>
+              <td class="py-1.5" data-label="Account" data-col="account">
+                <select name="category_account_id" class="input" required>
+                  {% for account in all_accounts if account.id != selected_account_id %}
+                  <option value="{{ account.id }}">{{ account.name }}</option>
+                  {% endfor %}
+                </select>
+              </td>
+              <td data-col="projects"></td>
+              <td data-col="counterparty"></td>
+              <td class="py-1.5 text-right" data-label="Amount"><input type="number" step="0.01" name="amount" class="input px-2 text-right" placeholder="0.00" required></td>
+              <td class="justify-end py-1.5 text-right whitespace-nowrap">
+                <button type="submit" formaction="{{ url_for('accounts.transactions_new') }}"
+                        class="btn btn-ghost btn-icon text-accent" aria-label="Save transaction">
+                  {{ icon("check") }}
+                </button>
+                <button type="button" class="btn btn-ghost btn-icon" data-reveal="new-transaction-row" aria-label="Cancel">
+                  {{ icon("x") }}
+                </button>
+              </td>
+            </tr>
+            {% for txn in transactions %}
+            {% set split_key = "split-" ~ txn.transaction_hash %}
+            <tr>
+              <td><input type="checkbox" name="ids" value="{{ txn.transaction_hash }}"></td>
+              <td class="whitespace-nowrap" data-label="Date">{{ txn.date }}</td>
+              <td class="truncate" title="{{ txn.payee or '' }}" data-label="Payee" data-col="payee">
+                {% if txn.payee_id %}
+                <a class="link-subtle" href="{{ url_for('accounts.payee_view', payee_id=txn.payee_id, return_to=here) }}">{{ txn.payee }}</a>
+                {% else %}
+                {{ txn.payee or "-" }}
+                {% endif %}
+              </td>
+              <td class="truncate" title="{{ txn.category or '' }}" data-label="Account" data-col="account">
+                {% if txn.has_split %}
+                <button type="button" data-reveal-group="{{ split_key }}" aria-expanded="false"
+                        class="inline-flex items-center gap-1 text-text-secondary hover:text-text">
+                  {{ txn.splits|length }} Splits
+                  <span class="inline-flex transition-transform" data-reveal-chevron>{{ icon("chevron-right", "h-3 w-3") }}</span>
+                </button>
+                {% elif txn.category_account_id %}
+                <a class="link-subtle" href="{{ url_for('accounts.account_view', account_id=txn.category_account_id, return_to=here) }}">{{ txn.category }}</a>
+                {% else %}
+                {{ txn.category or "-" }}
+                {% endif %}
+              </td>
+              <td class="truncate" data-label="Projects" data-col="projects">
+                {% if txn.projects %}
+                  {% for name in txn.projects.split(",") %}
+                  <span class="badge">{{ name }}</span>
+                  {% endfor %}
+                {% else %}
+                -
+                {% endif %}
+              </td>
+              <td class="truncate" data-label="Counterparty" data-col="counterparty">{{ txn.counterparty or "-" }}</td>
+              <td class="text-right mono {{ 'amount-negative' if txn.amount < 0 else 'amount-positive' }}" data-label="Amount">
+                {{ txn.amount | money }}
+              </td>
+              <td class="justify-end text-right whitespace-nowrap">
+                <a class="btn btn-ghost btn-icon"
+                   href="{{ url_for('rules.rules', transaction_hash=txn.transaction_hash, tab='overrides', return_to=here) }}"
+                   aria-label="Recategorize or split">
+                  {{ icon("split") }}
+                </a>
+                {% if txn.status == "manual" %}
+                <button type="submit" formaction="{{ url_for('accounts.transactions_delete', transaction_hash=txn.transaction_hash) }}" formnovalidate
+                        class="btn btn-ghost btn-icon text-negative" data-confirm="Delete this transaction?" aria-label="Delete">
+                  {{ icon("trash") }}
+                </button>
+                {% endif %}
+              </td>
+            </tr>
+            {% for split in txn.splits if txn.has_split %}
+            <tr class="hidden bg-surface-raised" data-reveal-target="{{ split_key }}">
+              <td></td>
+              <td></td>
+              <td class="truncate text-text-secondary" title="{{ split.note or '' }}" data-label="Split" data-col="payee">
+                {{ split.note or txn.payee or "-" }}
+              </td>
+              <td class="truncate" data-label="Account" data-col="account">
+                <a class="link-subtle" href="{{ url_for('accounts.account_view', account_id=split.account_id, return_to=here) }}">{{ split.account }}</a>
+              </td>
+              <td data-col="projects"></td>
+              <td data-col="counterparty"></td>
+              <td class="text-right mono {{ 'amount-negative' if split.amount < 0 else 'amount-positive' }}" data-label="Amount">
+                {{ split.amount | money }}
+              </td>
+              <td></td>
+            </tr>
+            {% endfor %}
+            {% else %}
+            <tr>
+              <td colspan="8" class="py-6 text-center text-text-secondary">
+                {% if filters.search %}
+                Nothing matches <span class="mono text-text">{{ filters.search }}</span>.
+                <a class="ml-1 underline underline-offset-2" href="{{ url_for('accounts.accounts', account_id=selected_account_id) }}">Clear search</a>
+                {% else %}
+                No transactions.
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% endset %}
+
+    <div class="flex items-center justify-between rounded-t-lg border border-b-0 border-border bg-surface-raised px-3 py-2">
+      <span class="text-xs font-semibold uppercase tracking-wide text-text-secondary">Active accounts</span>
+      {% if selected_account %}
+      <span class="flex items-center gap-2 text-sm">
+        <span class="font-medium">{{ selected_account.name }}</span>
+        {% if selected_account.last4 %}
+        <span class="chip mono">&bull;&bull;&bull;&bull; {{ selected_account.last4 }}</span>
+        {% endif %}
+      </span>
+      {% endif %}
+    </div>
+
+    {{ master_detail(sidebar, main, grid_class="md:grid-cols-[220px_1fr]", height_class="md:h-[calc(100vh-220px)]", outer_class="rounded-t-none") }}
+  </form>
+{% endblock %}
+
+{% block scripts %}
+{% endblock %}
