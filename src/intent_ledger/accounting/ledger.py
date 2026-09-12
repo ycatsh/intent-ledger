@@ -125,8 +125,8 @@ def _find_unbalanced_groups(conn):
     """).fetchall()
 
 
-
 # Bookkeeping for rebuild_ledger:
+
 
 def _category_snapshot(conn):
     rows = conn.execute("""

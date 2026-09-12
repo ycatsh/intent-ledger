@@ -411,6 +411,7 @@ def get_payee_transactions(payee_id: int, sort="date_desc"):
 
 # Account/payee profile pages:
 
+
 def get_account_view_page(account_id: int):
     with db.transaction() as conn:
         account_row = conn.execute(
@@ -648,6 +649,7 @@ def _payee_cash_flow(t):
 
 
 # Shared helpers for account/payee profile pages:
+
 
 def _parse_date(value: str | None):
     return datetime.strptime(value, "%Y-%m-%d").date() if value else None

@@ -16,6 +16,7 @@ MATCHERS = {
 
 # Rule-matching primitives:
 
+
 def fetch_account_rules(conn):
     return AccountRuleRepository(conn).list_ordered()
 
@@ -94,6 +95,7 @@ def learn_account_rule(conn, normalized_description: str, account_id: int) -> No
 
 
 # Route-facing account rule CRUD:
+
 
 def get_accounts():
     with db.transaction() as conn:

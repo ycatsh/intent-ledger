@@ -1,11 +1,11 @@
 """Resolution ladder: how the account for each transaction is picked.
 
-  1. Transfer match:   if there are two transaction legs 
-  2. Manual split:     if the user added a manual split to any transaction
-  3. Manual override:  if the user added a manual override to the resolved transaction
-  4. Matching rule:    account returned by the user configured rules
-  5. Payee default:    account assigned as the default for any given payee
-  6. Unknown fallback 
+1. Transfer match:   if there are two transaction legs
+2. Manual split:     if the user added a manual split to any transaction
+3. Manual override:  if the user added a manual override to the resolved transaction
+4. Matching rule:    account returned by the user configured rules
+5. Payee default:    account assigned as the default for any given payee
+6. Unknown fallback
 """
 
 from dataclasses import dataclass
