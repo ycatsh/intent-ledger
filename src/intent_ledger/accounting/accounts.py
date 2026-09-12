@@ -175,62 +175,6 @@ _OTHER_LEG_COLUMNS = """
         ) AS category_type,"""
 
 
-def _load_splits(conn, transaction_hashes, exclude_account_id=None):
-    if not transaction_hashes:
-        return {}
-
-    placeholders = ",".join("?" * len(transaction_hashes))
-
-    if exclude_account_id is not None:
-        exclude_clause = "cl.account_id != ?"
-        params = [*transaction_hashes, exclude_account_id]
-    else:
-        exclude_clause = "cl.account_id != t2.account_id"
-        params = list(transaction_hashes)
-
-    rows = conn.execute(
-        f"""
-        SELECT
-            t2.transaction_hash AS transaction_hash,
-            ca2.id AS account_id,
-            ca2.name AS account,
-            ca2.type AS type,
-            cl.description AS note,
-            -cl.amount_cents AS amount_cents
-        FROM ledger cl
-        JOIN transactions t2 ON t2.id = cl.transaction_id
-        JOIN accounts ca2 ON ca2.id = cl.account_id
-        WHERE t2.transaction_hash IN ({placeholders}) AND {exclude_clause}
-        ORDER BY cl.id
-    """,
-        params,
-    ).fetchall()
-
-    by_hash = defaultdict(list)
-    for r in rows:
-        by_hash[r["transaction_hash"]].append(
-            {
-                "account_id": r["account_id"],
-                "account": r["account"],
-                "amount": Money(r["amount_cents"]).amount,
-                "type": r["type"],
-                "note": r["note"],
-            }
-        )
-
-    return by_hash
-
-
-def _attach_splits(conn, rows, exclude_account_id=None):
-    hashes = [r["transaction_hash"] for r in rows if r["has_split"]]
-    by_hash = _load_splits(conn, hashes, exclude_account_id=exclude_account_id)
-
-    for row in rows:
-        row["splits"] = by_hash.get(row["transaction_hash"], [])
-
-    return rows
-
-
 def get_ledger_entries(account_id: int | None, search=None, sort="date_desc", limit=None):
     text, filters = parse_search(search)
 
@@ -343,6 +287,62 @@ def get_ledger_entries(account_id: int | None, search=None, sort="date_desc", li
     return rows
 
 
+def _attach_splits(conn, rows, exclude_account_id=None):
+    hashes = [r["transaction_hash"] for r in rows if r["has_split"]]
+    by_hash = _load_splits(conn, hashes, exclude_account_id=exclude_account_id)
+
+    for row in rows:
+        row["splits"] = by_hash.get(row["transaction_hash"], [])
+
+    return rows
+
+
+def _load_splits(conn, transaction_hashes, exclude_account_id=None):
+    if not transaction_hashes:
+        return {}
+
+    placeholders = ",".join("?" * len(transaction_hashes))
+
+    if exclude_account_id is not None:
+        exclude_clause = "cl.account_id != ?"
+        params = [*transaction_hashes, exclude_account_id]
+    else:
+        exclude_clause = "cl.account_id != t2.account_id"
+        params = list(transaction_hashes)
+
+    rows = conn.execute(
+        f"""
+        SELECT
+            t2.transaction_hash AS transaction_hash,
+            ca2.id AS account_id,
+            ca2.name AS account,
+            ca2.type AS type,
+            cl.description AS note,
+            -cl.amount_cents AS amount_cents
+        FROM ledger cl
+        JOIN transactions t2 ON t2.id = cl.transaction_id
+        JOIN accounts ca2 ON ca2.id = cl.account_id
+        WHERE t2.transaction_hash IN ({placeholders}) AND {exclude_clause}
+        ORDER BY cl.id
+    """,
+        params,
+    ).fetchall()
+
+    by_hash = defaultdict(list)
+    for r in rows:
+        by_hash[r["transaction_hash"]].append(
+            {
+                "account_id": r["account_id"],
+                "account": r["account"],
+                "amount": Money(r["amount_cents"]).amount,
+                "type": r["type"],
+                "note": r["note"],
+            }
+        )
+
+    return by_hash
+
+
 def get_payee_transactions(payee_id: int, sort="date_desc"):
     sql = f"""
     SELECT
@@ -410,7 +410,6 @@ def get_payee_transactions(payee_id: int, sort="date_desc"):
 
 
 # Account/payee profile pages:
-
 
 def get_account_view_page(account_id: int):
     with db.transaction() as conn:
@@ -539,17 +538,10 @@ def get_account_view_page(account_id: int):
     }
 
 
-def _payee_cash_flow(t):
-    amount = t["amount"]
-    is_suspense_liability = t["account_type"] == "liability" and t["account_budget"] == 0
-
-    if is_suspense_liability:
-        return (-amount, 0) if amount > 0 else (0, 0)
-    if amount < 0:
-        return (-amount, 0)
-    if amount > 0:
-        return (0, amount)
-    return (0, 0)
+def _start_of_month_shifted(d: date, delta_months: int) -> date:
+    total = d.year * 12 + (d.month - 1) + delta_months
+    year, month = divmod(total, 12)
+    return date(year, month + 1, 1)
 
 
 def get_payee_view_page(payee_id: int):
@@ -642,6 +634,21 @@ def get_payee_view_page(payee_id: int):
     }
 
 
+def _payee_cash_flow(t):
+    amount = t["amount"]
+    is_suspense_liability = t["account_type"] == "liability" and t["account_budget"] == 0
+
+    if is_suspense_liability:
+        return (-amount, 0) if amount > 0 else (0, 0)
+    if amount < 0:
+        return (-amount, 0)
+    if amount > 0:
+        return (0, amount)
+    return (0, 0)
+
+
+# Shared helpers for account/payee profile pages:
+
 def _parse_date(value: str | None):
     return datetime.strptime(value, "%Y-%m-%d").date() if value else None
 
@@ -652,12 +659,6 @@ def _short_date(d: date | None) -> str:
 
 def _months_between(start: date, end: date) -> int:
     return (end.year - start.year) * 12 + (end.month - start.month) + 1
-
-
-def _start_of_month_shifted(d: date, delta_months: int) -> date:
-    total = d.year * 12 + (d.month - 1) + delta_months
-    year, month = divmod(total, 12)
-    return date(year, month + 1, 1)
 
 
 def _monthly_flow_chart(periods: list[str], in_series: list[float], out_series: list[float]) -> dict:

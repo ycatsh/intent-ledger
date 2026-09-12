@@ -22,18 +22,6 @@ def is_transfer_candidate(rules, raw_description: str) -> bool:
     return find_matching_rule(rules, raw_description) is not None
 
 
-def _pair_cost(a, b):
-    if a["account_id"] == b["account_id"]:
-        return DISQUALIFIED_COST
-
-    date_diff = abs((date.fromisoformat(a["posted_date"]) - date.fromisoformat(b["posted_date"])).days)
-    if date_diff > MAX_DATE_DIFF_DAYS:
-        return DISQUALIFIED_COST
-
-    similarity = SequenceMatcher(None, a["raw_description"], b["raw_description"]).ratio()
-    return date_diff * DATE_WEIGHT + (1 - similarity) * DESCRIPTION_WEIGHT
-
-
 def match_transfers(candidates):
     buckets = defaultdict(lambda: {"out": [], "in": []})
 
@@ -72,6 +60,18 @@ def _match_bucket(outs, ins):
         pairs[in_txn["id"]] = out_txn
 
     return pairs
+
+
+def _pair_cost(a, b):
+    if a["account_id"] == b["account_id"]:
+        return DISQUALIFIED_COST
+
+    date_diff = abs((date.fromisoformat(a["posted_date"]) - date.fromisoformat(b["posted_date"])).days)
+    if date_diff > MAX_DATE_DIFF_DAYS:
+        return DISQUALIFIED_COST
+
+    similarity = SequenceMatcher(None, a["raw_description"], b["raw_description"]).ratio()
+    return date_diff * DATE_WEIGHT + (1 - similarity) * DESCRIPTION_WEIGHT
 
 
 def _hungarian(cost):

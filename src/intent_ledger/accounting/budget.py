@@ -175,62 +175,9 @@ def get_budget_page(year: int, month: int):
     }
 
 
-def save_budget(form, period: str):
-    with db.transaction() as conn:
-        categories = conn.execute("""
-            SELECT id FROM accounts WHERE type = 'expense' AND budget = 1
-        """).fetchall()
-
-    with db.transaction() as conn:
-        budget_repo = BudgetRepository(conn)
-        for cat in categories:
-            value = form.get(f"budget_{cat['id']}", type=float)
-            amount_cents = round(value * 100) if value else 0
-            budget_repo.set_amount_cents(cat["id"], period, amount_cents)
-
-
-def save_goal(form, account_id: int):
-    target = form.get(f"goal_amount_{account_id}", type=float)
-    target_date = form.get(f"goal_date_{account_id}") or None
-
-    if target is None:
-        return False
-
-    with db.transaction() as conn:
-        BudgetRepository(conn).set_goal(account_id, round(target * 100), target_date)
-
-    return True
-
-
-def delete_goal(account_id: int):
-    with db.transaction() as conn:
-        BudgetRepository(conn).delete_goal(account_id)
-
-
-def move_budget(form, account_id: int, period: str):
-    destination_id = form.get(f"move_to_{account_id}", type=int)
-    amount = form.get(f"move_amount_{account_id}", type=float)
-
-    if not destination_id or not amount:
-        return 0.0  # missing/invalid input
-
-    if destination_id == account_id:
-        return 0.0  # moving a category's budget to itself is a no-op, not an error
-
-    amount_cents = round(abs(amount) * 100)
-
-    with db.transaction() as conn:
-        budget_repo = BudgetRepository(conn)
-        available = budget_repo.get_amount_cents(account_id, period)
-        moved = min(amount_cents, max(available, 0))
-
-        if moved <= 0:
-            return 0.0
-
-        for target_id, delta in ((account_id, -moved), (destination_id, moved)):
-            budget_repo.adjust_amount_cents(target_id, period, delta)
-
-    return Money(moved).amount
+def shift_year_month(year: int, month: int, delta: int):
+    total = year * 12 + (month - 1) + delta
+    return total // 12, total % 12 + 1
 
 
 def _period_rows(conn, period: str):
@@ -365,45 +312,6 @@ def _recent_transactions(conn, period: str, limit: int = 5):
     return recent
 
 
-def _presets(cat_id, period_data, past_periods, goal, rollover_cents, primary_period):
-    past_spend = [
-        Money(-period_data[period].get(cat_id, {"spent": 0})["spent"]).amount for period in past_periods
-    ]
-    last = Money(period_data[past_periods[0]].get(cat_id, {"assigned": 0})["assigned"]).amount
-
-    presets = {
-        "last": last,
-        "avg3": sum(past_spend) / len(past_spend) if past_spend else 0.0,
-    }
-
-    suggestion = _goal_suggestion(goal, rollover_cents, primary_period)
-    if suggestion is not None:
-        presets["goal"] = suggestion
-
-    return presets
-
-
-def _goal_suggestion(goal, rollover_cents, primary_period):
-    if not goal:
-        return None
-
-    remaining = goal["target"] - Money(rollover_cents).amount
-    if remaining <= 0:
-        return 0.0
-
-    if not goal["target_date"]:
-        return round(remaining, 2)
-
-    start = date.fromisoformat(primary_period)
-    target = date.fromisoformat(goal["target_date"])
-    months_left = max(
-        (target.year * 12 + target.month) - (start.year * 12 + start.month) + 1,
-        1,
-    )
-
-    return round(remaining / months_left, 2)
-
-
 def _month_elapsed(year: int, month: int):
     today_ = today()
 
@@ -464,6 +372,55 @@ def _status_text(status: str, rollover_cents):
     return _STATUS_TEXT[status]
 
 
+def _presets(cat_id, period_data, past_periods, goal, rollover_cents, primary_period):
+    past_spend = [
+        Money(-period_data[period].get(cat_id, {"spent": 0})["spent"]).amount for period in past_periods
+    ]
+    last = Money(period_data[past_periods[0]].get(cat_id, {"assigned": 0})["assigned"]).amount
+
+    presets = {
+        "last": last,
+        "avg3": sum(past_spend) / len(past_spend) if past_spend else 0.0,
+    }
+
+    suggestion = _goal_suggestion(goal, rollover_cents, primary_period)
+    if suggestion is not None:
+        presets["goal"] = suggestion
+
+    return presets
+
+
+def _goal_suggestion(goal, rollover_cents, primary_period):
+    if not goal:
+        return None
+
+    remaining = goal["target"] - Money(rollover_cents).amount
+    if remaining <= 0:
+        return 0.0
+
+    if not goal["target_date"]:
+        return round(remaining, 2)
+
+    start = date.fromisoformat(primary_period)
+    target = date.fromisoformat(goal["target_date"])
+    months_left = max(
+        (target.year * 12 + target.month) - (start.year * 12 + start.month) + 1,
+        1,
+    )
+
+    return round(remaining / months_left, 2)
+
+
+def _short_label(period: str) -> str:
+    d = date.fromisoformat(period)
+    return f"{month_name[d.month][:3]} {str(d.year)[2:]}"
+
+
+def _period_label(period: str) -> str:
+    d = date.fromisoformat(period)
+    return f"{month_name[d.month]} {d.year}"
+
+
 def _group_rows(rows, periods):
     groups = {}
 
@@ -491,16 +448,59 @@ def _group_rows(rows, periods):
     return list(groups.values())
 
 
-def _period_label(period: str) -> str:
-    d = date.fromisoformat(period)
-    return f"{month_name[d.month]} {d.year}"
+def save_budget(form, period: str):
+    with db.transaction() as conn:
+        categories = conn.execute("""
+            SELECT id FROM accounts WHERE type = 'expense' AND budget = 1
+        """).fetchall()
+
+    with db.transaction() as conn:
+        budget_repo = BudgetRepository(conn)
+        for cat in categories:
+            value = form.get(f"budget_{cat['id']}", type=float)
+            amount_cents = round(value * 100) if value else 0
+            budget_repo.set_amount_cents(cat["id"], period, amount_cents)
 
 
-def _short_label(period: str) -> str:
-    d = date.fromisoformat(period)
-    return f"{month_name[d.month][:3]} {str(d.year)[2:]}"
+def save_goal(form, account_id: int):
+    target = form.get(f"goal_amount_{account_id}", type=float)
+    target_date = form.get(f"goal_date_{account_id}") or None
+
+    if target is None:
+        return False
+
+    with db.transaction() as conn:
+        BudgetRepository(conn).set_goal(account_id, round(target * 100), target_date)
+
+    return True
 
 
-def shift_year_month(year: int, month: int, delta: int):
-    total = year * 12 + (month - 1) + delta
-    return total // 12, total % 12 + 1
+def delete_goal(account_id: int):
+    with db.transaction() as conn:
+        BudgetRepository(conn).delete_goal(account_id)
+
+
+def move_budget(form, account_id: int, period: str):
+    destination_id = form.get(f"move_to_{account_id}", type=int)
+    amount = form.get(f"move_amount_{account_id}", type=float)
+
+    if not destination_id or not amount:
+        return 0.0  # missing/invalid input
+
+    if destination_id == account_id:
+        return 0.0  # moving a category's budget to itself is a no-op, not an error
+
+    amount_cents = round(abs(amount) * 100)
+
+    with db.transaction() as conn:
+        budget_repo = BudgetRepository(conn)
+        available = budget_repo.get_amount_cents(account_id, period)
+        moved = min(amount_cents, max(available, 0))
+
+        if moved <= 0:
+            return 0.0
+
+        for target_id, delta in ((account_id, -moved), (destination_id, moved)):
+            budget_repo.adjust_amount_cents(target_id, period, delta)
+
+    return Money(moved).amount

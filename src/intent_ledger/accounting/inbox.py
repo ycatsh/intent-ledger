@@ -220,6 +220,22 @@ def _assign(conn, transaction_id: int, payee_name: str, account_name: str):
         _set_override(conn, transaction_id, account_id)
 
 
+def _set_override(conn, transaction_id: int, account_id: int):
+    txn = conn.execute(
+        """
+        SELECT transaction_hash
+        FROM transactions
+        WHERE id = ?
+        """,
+        (transaction_id,),
+    ).fetchone()
+
+    if txn is None:
+        raise ValueError("Transaction not found.")
+
+    OverrideRepository(conn).set(txn["transaction_hash"], account_id)
+
+
 def _assign_payee(conn, transaction_id: int, payee_id: int):
     txn = conn.execute(
         """
@@ -275,19 +291,3 @@ def _assign_payee(conn, transaction_id: int, payee_id: int):
     )
 
     return payee_id
-
-
-def _set_override(conn, transaction_id: int, account_id: int):
-    txn = conn.execute(
-        """
-        SELECT transaction_hash
-        FROM transactions
-        WHERE id = ?
-        """,
-        (transaction_id,),
-    ).fetchone()
-
-    if txn is None:
-        raise ValueError("Transaction not found.")
-
-    OverrideRepository(conn).set(txn["transaction_hash"], account_id)

@@ -14,6 +14,8 @@ MATCHERS = {
 }
 
 
+# Rule-matching primitives:
+
 def fetch_account_rules(conn):
     return AccountRuleRepository(conn).list_ordered()
 
@@ -54,10 +56,14 @@ def find_matching_rule(rules, raw_description: str):
     return None
 
 
-def learn_account_rule(conn, normalized_description: str, account_id: int) -> None:
-    repo = AccountRuleRepository(conn)
-    repo.delete_learned(normalized_description)
-    repo.create("equals", normalized_description, account_id, 100)
+def default_account_id(rules, conn, raw_description: str, payee_id):
+    """Rule match, else the payee's default account, else the Unknown fallback."""
+    rule = find_matching_rule(rules, raw_description)
+    return (
+        (rule["account_id"] if rule else None)
+        or get_payee_account_id(conn, payee_id)
+        or get_unknown_account_id(conn)
+    )
 
 
 def get_payee_account_id(conn, payee_id):
@@ -81,15 +87,13 @@ def get_unknown_account_id(conn):
     return row["id"]
 
 
-def default_account_id(rules, conn, raw_description: str, payee_id):
-    """Rule match, else the payee's default account, else the Unknown fallback."""
-    rule = find_matching_rule(rules, raw_description)
-    return (
-        (rule["account_id"] if rule else None)
-        or get_payee_account_id(conn, payee_id)
-        or get_unknown_account_id(conn)
-    )
+def learn_account_rule(conn, normalized_description: str, account_id: int) -> None:
+    repo = AccountRuleRepository(conn)
+    repo.delete_learned(normalized_description)
+    repo.create("equals", normalized_description, account_id, 100)
 
+
+# Route-facing account rule CRUD:
 
 def get_accounts():
     with db.transaction() as conn:

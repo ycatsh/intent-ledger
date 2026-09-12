@@ -154,39 +154,6 @@ def delete_override(transaction_hash):
         SplitRepository(conn).delete(transaction_hash)
 
 
-def parse_split_lines(form) -> list[SplitLine]:
-    """Read the split rows off a form, skipping any the user left blank.
-
-    The editor lets rows be added and removed freely, so the posted lists are
-    only as long as the rows that survived - and a row can be present but
-    still empty, which is not an error, just nothing to save.
-    """
-    accounts = form.getlist("split_account")
-    amounts = form.getlist("split_amount")
-    notes = form.getlist("split_note")
-
-    lines = []
-
-    for index, raw_account in enumerate(accounts):
-        raw_amount = amounts[index].strip() if index < len(amounts) else ""
-        note = notes[index].strip() if index < len(notes) else ""
-
-        if not raw_account.strip() and not raw_amount:
-            continue
-
-        if not raw_account.strip():
-            raise ValueError("Every split line needs a category.")
-
-        try:
-            amount = float(raw_amount)
-        except ValueError:
-            raise ValueError("Every split line needs an amount.") from None
-
-        lines.append((int(raw_account), Money.from_dollars(amount).cents, note or None))
-
-    return lines
-
-
 def save_split(form):
     transaction_hash = form.get("transaction_hash", "").strip()
     if not transaction_hash:
@@ -217,3 +184,31 @@ def save_split(form):
 
         OverrideRepository(conn).delete(transaction_hash)
         SplitRepository(conn).replace(transaction_hash, lines)
+
+
+def parse_split_lines(form) -> list[SplitLine]:
+    """Read the split rows off a form, skipping any the user left blank."""
+    accounts = form.getlist("split_account")
+    amounts = form.getlist("split_amount")
+    notes = form.getlist("split_note")
+
+    lines = []
+
+    for index, raw_account in enumerate(accounts):
+        raw_amount = amounts[index].strip() if index < len(amounts) else ""
+        note = notes[index].strip() if index < len(notes) else ""
+
+        if not raw_account.strip() and not raw_amount:
+            continue
+
+        if not raw_account.strip():
+            raise ValueError("Every split line needs a category.")
+
+        try:
+            amount = float(raw_amount)
+        except ValueError:
+            raise ValueError("Every split line needs an amount.") from None
+
+        lines.append((int(raw_account), Money.from_dollars(amount).cents, note or None))
+
+    return lines

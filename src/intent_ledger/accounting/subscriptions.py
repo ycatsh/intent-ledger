@@ -130,16 +130,6 @@ def _advance(d: date, cadence: str) -> date:
     return date(year, month, day)
 
 
-def _monthly_equivalent(amount, cadence):
-    if cadence == "weekly":
-        return amount * 52 / 12
-    if cadence == "quarterly":
-        return amount / 3
-    if cadence == "yearly":
-        return amount / 12
-    return amount
-
-
 def _account_tagged_candidates(conn, tracked_payee_ids):
     """Payees with transactions already posted to the Subscriptions
     category account, even if too few/irregular to be auto-detected as
@@ -184,6 +174,13 @@ def _account_tagged_candidates(conn, tracked_payee_ids):
     return candidates
 
 
+def _subscription_account_id(conn) -> int:
+    row = conn.execute("SELECT id FROM accounts WHERE type = 'expense' AND name = 'Subscriptions'").fetchone()
+    if not row:
+        raise ValueError("'Subscriptions' category account not found.")
+    return row["id"]
+
+
 def _guess_cadence(txns) -> str:
     if len(txns) < 2:
         return "monthly"
@@ -201,6 +198,16 @@ def _guess_cadence(txns) -> str:
     return "yearly"
 
 
+def _monthly_equivalent(amount, cadence):
+    if cadence == "weekly":
+        return amount * 52 / 12
+    if cadence == "quarterly":
+        return amount / 3
+    if cadence == "yearly":
+        return amount / 12
+    return amount
+
+
 def create_subscription(form) -> int:
     fields = _parse_form(form)
     fields["first_seen_date"] = _derive_first_seen_date(fields["payee_id"], fields["amount_cents"])
@@ -211,6 +218,44 @@ def create_subscription(form) -> int:
 
     rebuild_subscription_matches()
     return subscription_id
+
+
+def _parse_form(form):
+    payee_id = form.get("payee_id", type=int)
+    if not payee_id:
+        raise ValueError("Payee is required.")
+
+    cadence = form.get("cadence", "").strip()
+    if cadence not in CADENCES:
+        raise ValueError("Choose a valid cadence.")
+
+    amount = form.get("amount", type=float)
+    if not amount or amount <= 0:
+        raise ValueError("Amount must be a positive number.")
+
+    return {
+        "payee_id": payee_id,
+        "name": form.get("name", "").strip() or None,
+        "amount_cents": -round(amount * 100),
+        "cadence": cadence,
+        "notes": form.get("notes", "").strip() or None,
+    }
+
+
+def _derive_first_seen_date(payee_id: int, amount_cents: int) -> str:
+    with db.transaction() as conn:
+        row = conn.execute(
+            """
+            SELECT MIN(t.posted_date) AS d
+            FROM ledger l
+            JOIN transactions t ON t.id = l.transaction_id
+            JOIN accounts a ON a.id = l.account_id
+            WHERE a.type = 'expense' AND l.amount_cents = ? AND t.payee_id = ?
+        """,
+            (-amount_cents, payee_id),
+        ).fetchone()
+
+    return row["d"] or today().isoformat()
 
 
 def update_subscription(subscription_id: int, form):
@@ -288,48 +333,3 @@ def rebuild_subscription_matches():
                 """,
                     (sub["id"], r["transaction_id"], -r["amount_cents"], r["posted_date"]),
                 )
-
-
-def _subscription_account_id(conn) -> int:
-    row = conn.execute("SELECT id FROM accounts WHERE type = 'expense' AND name = 'Subscriptions'").fetchone()
-    if not row:
-        raise ValueError("'Subscriptions' category account not found.")
-    return row["id"]
-
-
-def _parse_form(form):
-    payee_id = form.get("payee_id", type=int)
-    if not payee_id:
-        raise ValueError("Payee is required.")
-
-    cadence = form.get("cadence", "").strip()
-    if cadence not in CADENCES:
-        raise ValueError("Choose a valid cadence.")
-
-    amount = form.get("amount", type=float)
-    if not amount or amount <= 0:
-        raise ValueError("Amount must be a positive number.")
-
-    return {
-        "payee_id": payee_id,
-        "name": form.get("name", "").strip() or None,
-        "amount_cents": -round(amount * 100),
-        "cadence": cadence,
-        "notes": form.get("notes", "").strip() or None,
-    }
-
-
-def _derive_first_seen_date(payee_id: int, amount_cents: int) -> str:
-    with db.transaction() as conn:
-        row = conn.execute(
-            """
-            SELECT MIN(t.posted_date) AS d
-            FROM ledger l
-            JOIN transactions t ON t.id = l.transaction_id
-            JOIN accounts a ON a.id = l.account_id
-            WHERE a.type = 'expense' AND l.amount_cents = ? AND t.payee_id = ?
-        """,
-            (-amount_cents, payee_id),
-        ).fetchone()
-
-    return row["d"] or today().isoformat()

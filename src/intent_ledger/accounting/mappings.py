@@ -95,24 +95,6 @@ def unlink_payee(payee_name: str) -> dict:
     }
 
 
-def _account_rows(conn, types, order_by):
-    placeholders = ", ".join("?" for _ in types)
-    return conn.execute(
-        f"""
-        SELECT
-            a.id, a.name, a.type, a.parent_account_id, a.institution,
-            a.account_number_last4, a.budget, a.is_active, a.needs_review,
-            p.name AS parent_name, p.type AS parent_type
-        FROM accounts a
-        LEFT JOIN accounts p
-            ON p.id = a.parent_account_id
-        WHERE a.type IN ({placeholders})
-        ORDER BY {order_by}
-        """,
-        types,
-    ).fetchall()
-
-
 def get_mappings_page():
     with db.transaction() as conn:
         balance_sheet_accounts = _account_rows(
@@ -166,6 +148,24 @@ def get_mappings_page():
     return balance_sheet_accounts, category_accounts, payees, aliases, counterparties
 
 
+def _account_rows(conn, types, order_by):
+    placeholders = ", ".join("?" for _ in types)
+    return conn.execute(
+        f"""
+        SELECT
+            a.id, a.name, a.type, a.parent_account_id, a.institution,
+            a.account_number_last4, a.budget, a.is_active, a.needs_review,
+            p.name AS parent_name, p.type AS parent_type
+        FROM accounts a
+        LEFT JOIN accounts p
+            ON p.id = a.parent_account_id
+        WHERE a.type IN ({placeholders})
+        ORDER BY {order_by}
+        """,
+        types,
+    ).fetchall()
+
+
 def save_mappings(changes):
     for change in changes:
         op, table = change.get("op"), change.get("table")
@@ -190,31 +190,6 @@ def save_mappings(changes):
             _apply_change(conn, change, id_map)
 
     return id_map
-
-
-def _validate_account_hierarchy(conn, account_id, fields):
-    if "type" not in fields and "parent_account_id" not in fields:
-        return
-
-    account_type = fields.get("type")
-    if account_type is None and account_id is not None:
-        row = conn.execute("SELECT type FROM accounts WHERE id = ?", (account_id,)).fetchone()
-        account_type = row["type"] if row else None
-
-    if "parent_account_id" in fields:
-        parent_id = fields["parent_account_id"]
-    elif account_id is not None:
-        row = conn.execute("SELECT parent_account_id FROM accounts WHERE id = ?", (account_id,)).fetchone()
-        parent_id = row["parent_account_id"] if row else None
-    else:
-        parent_id = None
-
-    if not parent_id:
-        return
-
-    parent = conn.execute("SELECT type FROM accounts WHERE id = ?", (parent_id,)).fetchone()
-    if parent and account_type and parent["type"] != account_type:
-        raise ValueError(f"A {account_type} account can't be nested under a {parent['type']} account.")
 
 
 def _apply_change(conn, change, id_map):
@@ -259,3 +234,28 @@ def _apply_change(conn, change, id_map):
 
     except sqlite3.IntegrityError as e:
         raise ValueError(str(e)) from e
+
+
+def _validate_account_hierarchy(conn, account_id, fields):
+    if "type" not in fields and "parent_account_id" not in fields:
+        return
+
+    account_type = fields.get("type")
+    if account_type is None and account_id is not None:
+        row = conn.execute("SELECT type FROM accounts WHERE id = ?", (account_id,)).fetchone()
+        account_type = row["type"] if row else None
+
+    if "parent_account_id" in fields:
+        parent_id = fields["parent_account_id"]
+    elif account_id is not None:
+        row = conn.execute("SELECT parent_account_id FROM accounts WHERE id = ?", (account_id,)).fetchone()
+        parent_id = row["parent_account_id"] if row else None
+    else:
+        parent_id = None
+
+    if not parent_id:
+        return
+
+    parent = conn.execute("SELECT type FROM accounts WHERE id = ?", (parent_id,)).fetchone()
+    if parent and account_type and parent["type"] != account_type:
+        raise ValueError(f"A {account_type} account can't be nested under a {parent['type']} account.")
