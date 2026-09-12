@@ -84,11 +84,12 @@
           data-dropzone data-account-id="{{ account.id }}" data-account-name="{{ account.name | lower }}">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <input type="hidden" name="account_id" value="{{ account.id }}">
-      <input type="file" name="statements" multiple hidden accept=".csv,.xls,.xlsx" data-dropzone-input>
-      <span class="flex min-w-0 items-center gap-2">
+      <input type="file" id="dropzone-file-{{ account.id }}" name="statements" multiple hidden
+             accept=".csv,.xls,.xlsx" data-dropzone-input>
+      <label for="dropzone-file-{{ account.id }}" class="flex min-w-0 flex-1 cursor-pointer items-center gap-2">
         {{ icon("upload", "h-4 w-4 shrink-0") }}
         <span class="truncate font-medium text-text">{{ account.name }}</span>
-      </span>
+      </label>
       <span class="flex shrink-0 items-center gap-3">
         <select name="parser_slug" class="input w-64" data-dropzone-parser>
           {% for parser in parsers %}

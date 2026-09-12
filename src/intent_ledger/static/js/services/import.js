@@ -55,11 +55,6 @@ updateVisibility();
 document.querySelectorAll("[data-dropzone]").forEach((zone) => {
   const input = zone.querySelector("[data-dropzone-input]");
 
-  zone.addEventListener("click", (event) => {
-    if (event.target === input || event.target.closest("select")) return;
-    input.click();
-  });
-
   input.addEventListener("change", () => {
     if (input.files.length) zone.requestSubmit();
   });
