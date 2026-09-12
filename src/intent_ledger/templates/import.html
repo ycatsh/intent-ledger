@@ -12,11 +12,17 @@
     {% endif %}
   {% endset %}
   {% set controls %}
-    <select name="parser_slug" id="parser_slug" class="input w-44 sm:w-56">
-      {% for parser in parsers %}
-      <option value="{{ parser.slug }}">{{ parser.display_name }}</option>
-      {% endfor %}
-    </select>
+    <details class="relative" data-account-menu>
+      <summary class="btn btn-ghost">{{ icon("filter") }} Accounts</summary>
+      <div class="mtoolbar-menu left-auto right-0 flex w-56 flex-col">
+        {% for account in accounts %}
+        <label class="flex items-center gap-2 rounded px-2 py-1 text-sm hover:bg-surface-hover">
+          <input type="checkbox" data-account-toggle="{{ account.id }}" checked>
+          {{ account.name }}
+        </label>
+        {% endfor %}
+      </div>
+    </details>
     <button type="button" class="btn btn-ghost btn-icon" data-modal-open="format-info-modal" aria-label="Format details">
       {{ icon("info") }}
     </button>
@@ -75,16 +81,22 @@
     {% for account in accounts %}
     <form method="post" action="{{ url_for('import.import_upload') }}" enctype="multipart/form-data"
           class="dropzone-row flex items-center justify-between gap-3 px-3 py-2 text-sm"
-          data-dropzone data-account-name="{{ account.name | lower }}">
+          data-dropzone data-account-id="{{ account.id }}" data-account-name="{{ account.name | lower }}">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <input type="hidden" name="account_id" value="{{ account.id }}">
-      <input type="hidden" name="parser_slug" value="{{ parsers[0].slug if parsers else '' }}" data-parser-slug-field>
       <input type="file" name="statements" multiple hidden accept=".csv,.xls,.xlsx" data-dropzone-input>
-      <span class="flex items-center gap-2">
-        {{ icon("download", "h-4 w-4 shrink-0") }}
-        <span class="font-medium text-text">{{ account.name }}</span>
+      <span class="flex min-w-0 items-center gap-2">
+        {{ icon("upload", "h-4 w-4 shrink-0") }}
+        <span class="truncate font-medium text-text">{{ account.name }}</span>
       </span>
-      <span class="shrink-0 text-xs">Drop or click to browse</span>
+      <span class="flex shrink-0 items-center gap-3">
+        <select name="parser_slug" class="input w-64" data-dropzone-parser>
+          {% for parser in parsers %}
+          <option value="{{ parser.slug }}">{{ parser.display_name }}</option>
+          {% endfor %}
+        </select>
+        <span class="hidden text-xs sm:inline">Drop or click to browse</span>
+      </span>
     </form>
     {% else %}
     <div class="p-4 text-center text-text-secondary">No accounts yet. Add one from the Accounts page first.</div>

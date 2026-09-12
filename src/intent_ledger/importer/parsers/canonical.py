@@ -15,7 +15,7 @@ ALL_COLUMNS = REQUIRED_COLUMNS + OPTIONAL_COLUMNS
 
 class CanonicalParser:
     slug = "canonical"
-    display_name = "Canonical CSV/XLS/XLSX template"
+    display_name = "Canonical CSV/XLS/XLSX"
     file_extensions = (".csv", ".xls", ".xlsx")
 
     def sniff(self, path: Path) -> bool:

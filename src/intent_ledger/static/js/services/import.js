@@ -1,34 +1,67 @@
-const parserSelect = document.getElementById("parser_slug");
+const rows = [...document.querySelectorAll("#dropzone-list [data-dropzone]")];
+const noMatches = document.getElementById("dropzone-no-matches");
+let searchQuery = "";
 
-document.getElementById("account-search")?.addEventListener("input", (event) => {
-  const query = event.target.value.trim().toLowerCase();
-  const rows = document.querySelectorAll("#dropzone-list [data-dropzone]");
+const ACCOUNT_PREF_KEY = "import-hidden-accounts";
+const accountMenu = document.querySelector("[data-account-menu]");
+let hiddenAccounts;
+try {
+  hiddenAccounts = new Set(JSON.parse(window.localStorage.getItem(ACCOUNT_PREF_KEY)) || []);
+} catch {
+  hiddenAccounts = new Set();
+}
+
+function updateVisibility() {
   let visible = 0;
 
   rows.forEach((row) => {
-    const match = row.dataset.accountName.includes(query);
-    row.classList.toggle("hidden", !match);
-    if (match) visible += 1;
+    const show = row.dataset.accountName.includes(searchQuery) && !hiddenAccounts.has(row.dataset.accountId);
+    row.classList.toggle("hidden", !show);
+    if (show) visible += 1;
   });
 
-  document.getElementById("dropzone-no-matches")?.classList.toggle("hidden", visible > 0 || rows.length === 0);
+  noMatches?.classList.toggle("hidden", visible > 0 || rows.length === 0);
+}
+
+document.getElementById("account-search")?.addEventListener("input", (event) => {
+  searchQuery = event.target.value.trim().toLowerCase();
+  updateVisibility();
 });
+
+if (accountMenu) {
+  const toggles = [...accountMenu.querySelectorAll("[data-account-toggle]")];
+
+  toggles.forEach((toggle) => {
+    toggle.checked = !hiddenAccounts.has(toggle.dataset.accountToggle);
+
+    toggle.addEventListener("change", () => {
+      const accountId = toggle.dataset.accountToggle;
+      toggle.checked ? hiddenAccounts.delete(accountId) : hiddenAccounts.add(accountId);
+      try {
+        window.localStorage.setItem(ACCOUNT_PREF_KEY, JSON.stringify([...hiddenAccounts]));
+      } catch {
+      }
+      updateVisibility();
+    });
+  });
+
+  document.addEventListener("click", (event) => {
+    if (!accountMenu.contains(event.target)) accountMenu.removeAttribute("open");
+  });
+}
+
+updateVisibility();
 
 document.querySelectorAll("[data-dropzone]").forEach((zone) => {
   const input = zone.querySelector("[data-dropzone-input]");
-  const parserField = zone.querySelector("[data-parser-slug-field]");
 
   zone.addEventListener("click", (event) => {
-    if (event.target === input) return;
+    if (event.target === input || event.target.closest("select")) return;
     input.click();
   });
 
   input.addEventListener("change", () => {
     if (input.files.length) zone.requestSubmit();
-  });
-
-  zone.addEventListener("submit", () => {
-    if (parserField && parserSelect) parserField.value = parserSelect.value;
   });
 
   zone.addEventListener("dragover", (event) => {
