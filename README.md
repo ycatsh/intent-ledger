@@ -21,15 +21,23 @@ The usual accounting reports are there too: balance sheets, cashflows, and other
 - Double-entry ledger compiled from imported bank statements and manual entries
 - Bank-agnostic import via a [canonical CSV/XLS/XLSX template](docs/canonical-template.md), with a pluggable parser interface for bank-specific formats
   ([docs/adding-a-parser.md](docs/adding-a-parser.md))
-- Resolution Ladder:
-  - Rules/Transfers first,
-  - Overrides second,
-  - Merchant-alias-based auto-categorization third,   
-with a triage inbox for anything unmatched
 - Hungarian algorithm to detect transfers between accounts in the uploaded bank statements.
 - Envelope budgeting, expense reports, recurring-payment/subscription tracking,
   and cost-center projects
 - Formatted XLSX/CSV exports: per-account statements (balance sheet, cashflow, categorized transactions), per-project reports, and yearly reports
+
+### Resolution Ladder
+
+How a transaction gets booked against a category account. The order is the priority in which they are applied:
+
+1. **Transfer match**: paired with a counterpart transaction in another account, so the two book against each other
+2. **Manual split**: the user splits the transaction across several categories
+3. **Manual override**: the user pinned that transaction to a category
+4. **Matching rule**: the category from the first user-configured rule
+5. **Payee default**: the category set as that payee's default
+6. **Unknown fallback**: everything else
+
+Anything falls through is sent to "Unknown" and shows up in the triage inbox for review.
 
 <br>
 
