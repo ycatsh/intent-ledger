@@ -28,6 +28,7 @@ Edit `static/css/input.css` to change styles. `app.css` is generated via Tailwin
 - **Commit messages**: `fix: <short-description>` or `feat: <short-description>` is fine; not strictly enforced.
 - **Front-end assets**: never add a CDN `<script>` or `<link>`. Vendor the file under `static/` and reference it locally instead.
 - **Tests**: include a test for any behavior change. This is not optional for changes to the importer (`intent_ledger/importer/`) or the ledger compiler (`intent_ledger/accounting/ledger.py`)
+- **AI agents**: pull requests and issues must be opened by a human, not an agent. An agent can prepare a branch and commits for you to push and open yourself. See [docs/AGENTS.md](AGENTS.md) for the rules agents follow in this repo.
 
 <br>
 
