@@ -5,9 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        This project is deliberately simple (single currency, no
-        live bank sync, server-rendered). Feature requests that go 
-        against that will likely be declined.
+        This project is deliberately simple (single currency, no live bank sync, server-rendered). Feature requests that go against that will likely be declined.
 
   - type: textarea
     id: problem

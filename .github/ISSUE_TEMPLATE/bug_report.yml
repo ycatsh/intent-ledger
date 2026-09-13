@@ -5,10 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for taking the time to report this. If this bug could expose
-        someone's financial data (not just a local glitch), please use
-        private vulnerability reporting instead (Security tab -> Report a
-        vulnerability) rather than filing a public issue.
+        Thanks for taking the time to report this. If this bug could expose someone's financial data (not just a local glitch), please use private vulnerability reporting instead (Security tab -> Report a vulnerability) rather than filing a public issue.
 
   - type: textarea
     id: summary
