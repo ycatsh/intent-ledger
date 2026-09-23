@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS account_rules (
     account_id INTEGER NOT NULL,
     payee_id INTEGER,
     priority INTEGER DEFAULT 0,
+    needs_review BOOLEAN NOT NULL DEFAULT 0,
     FOREIGN KEY (account_id) REFERENCES accounts(id),
     FOREIGN KEY (payee_id) REFERENCES payees(id)
 );

@@ -91,7 +91,7 @@ def get_unknown_account_id(conn):
 def learn_account_rule(conn, normalized_description: str, account_id: int) -> None:
     repo = AccountRuleRepository(conn)
     repo.delete_learned(normalized_description)
-    repo.create("equals", normalized_description, account_id, 100)
+    repo.create("equals", normalized_description, account_id, 100, needs_review=True)
 
 
 # Route-facing account rule CRUD:
@@ -109,6 +109,16 @@ def get_accounts():
 def get_account_rules():
     with db.transaction() as conn:
         return AccountRuleRepository(conn).list_with_account_name()
+
+
+def get_rules_needing_review_count() -> int:
+    with db.transaction() as conn:
+        return AccountRuleRepository(conn).needs_review_count()
+
+
+def dismiss_rule_review(rule_id: int) -> None:
+    with db.transaction() as conn:
+        AccountRuleRepository(conn).mark_reviewed(rule_id)
 
 
 def preview_rule_matches(match_type: str, pattern: str, limit: int = 200):

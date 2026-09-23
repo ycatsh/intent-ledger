@@ -16,19 +16,22 @@
         <input type="checkbox" id="flat-toggle" {{ "checked" if flat else "" }}>
         No grouping
       </label>
-      <button type="button" class="btn btn-ghost btn-icon" data-modal-open="inbox-info-modal" aria-label="How grouping works">
-        {{ icon("info") }}
-      </button>
     </div>
   {% endset %}
   {% set controls %}
     <input type="search" id="inbox-search" class="input w-32 sm:w-44" placeholder="Search..." autocomplete="off">
+    <button type="button" class="btn btn-ghost btn-icon" data-modal-open="inbox-info-modal" aria-label="How grouping works">
+      {{ icon("info") }}
+    </button>
   {% endset %}
   {{ toolbar("Inbox", badge_label=count, actions=actions, controls=controls) }}
 {% endblock %}
 
 {% block statusbar %}
   {% if groups %}
+  <span title="Locked rows with no payee. The category is learned as a rule, matched by description from now on, and flagged for review.">
+    <span class="mono text-muted" data-status="rules">0</span> new rules
+  </span>
   <span title="Locked transactions whose category isn't their payee's default. Each one is saved as a per-transaction override.">
     <span class="mono text-muted" data-status="overrides">0</span> overrides
   </span>
@@ -276,10 +279,12 @@
     // Follows what _assign() would do with the locked rows: a category that
     // isn't the payee's default is stored as a per-transaction override, and
     // a payee with no default takes the first category assigned to it - so
-    // later rows for that payee are compared against that one.
+    // later rows for that payee are compared against that one. A row with no
+    // payee at all skips overrides entirely - it just teaches a rule.
     const defaults = new Map(payeeDefaults);
     const newPayees = new Set();
     const newAccounts = new Set();
+    const newRules = new Set();
     let overrides = 0;
     let locked = 0;
 
@@ -295,9 +300,9 @@
       if (!knownAccounts.has(category.toLowerCase())) newAccounts.add(category.toLowerCase());
 
       if (!payeeName) {
-        // No payee to hang a default off: the category is learned as a rule
-        // and pinned to the transaction as an override.
-        overrides += txnCount(row);
+        // No payee to hang a default off: the description is learned as a
+        // rule instead, flagged for review. No override is written.
+        newRules.add(row.dataset.sortLabel);
         continue;
       }
 
@@ -312,6 +317,7 @@
       }
     }
 
+    setStatus("rules", newRules.size);
     setStatus("overrides", overrides);
     setStatus("payees", newPayees.size);
     setStatus("accounts", newAccounts.size);

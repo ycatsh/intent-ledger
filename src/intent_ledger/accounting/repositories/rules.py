@@ -26,6 +26,10 @@ class AccountRuleRepository:
             ORDER BY ar.priority DESC, ar.pattern
         """).fetchall()
 
+    def needs_review_count(self) -> int:
+        row = self._conn.execute("SELECT COUNT(*) AS n FROM account_rules WHERE needs_review = 1").fetchone()
+        return row["n"]
+
     def get(self, rule_id: int):
         return self._conn.execute(
             """
@@ -41,14 +45,20 @@ class AccountRuleRepository:
         ).fetchone()
 
     def create(
-        self, match_type: str, pattern: str, account_id: int, priority: int, payee_id: int | None = None
+        self,
+        match_type: str,
+        pattern: str,
+        account_id: int,
+        priority: int,
+        payee_id: int | None = None,
+        needs_review: bool = False,
     ) -> int:
         cursor = self._conn.execute(
             """
-            INSERT INTO account_rules (match_type, pattern, account_id, payee_id, priority)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO account_rules (match_type, pattern, account_id, payee_id, priority, needs_review)
+            VALUES (?, ?, ?, ?, ?, ?)
         """,
-            (match_type, pattern, account_id, payee_id, priority),
+            (match_type, pattern, account_id, payee_id, priority, needs_review),
         )
         return cursor.lastrowid
 
@@ -64,11 +74,14 @@ class AccountRuleRepository:
         self._conn.execute(
             """
             UPDATE account_rules
-            SET match_type = ?, pattern = ?, account_id = ?, payee_id = ?, priority = ?
+            SET match_type = ?, pattern = ?, account_id = ?, payee_id = ?, priority = ?, needs_review = 0
             WHERE id = ?
         """,
             (match_type, pattern, account_id, payee_id, priority, rule_id),
         )
+
+    def mark_reviewed(self, rule_id: int) -> None:
+        self._conn.execute("UPDATE account_rules SET needs_review = 0 WHERE id = ?", (rule_id,))
 
     def delete(self, rule_id: int) -> None:
         self._conn.execute("DELETE FROM account_rules WHERE id = ?", (rule_id,))

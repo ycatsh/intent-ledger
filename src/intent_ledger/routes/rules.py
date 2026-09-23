@@ -4,9 +4,11 @@ from intent_ledger.accounting.accounts import get_all_payees
 from intent_ledger.accounting.rules import (
     add_account_rule,
     delete_account_rule,
+    dismiss_rule_review,
     get_account_rules,
     get_accounts,
     get_rule,
+    get_rules_needing_review_count,
     preview_rule_matches,
     update_account_rule,
 )
@@ -82,6 +84,7 @@ def rules():
         editing_transfer_rule=editing_transfer_rule,
         transfer_test=transfer_test,
         active_tab=active_tab,
+        rules_needing_review_count=get_rules_needing_review_count(),
     )
 
 
@@ -105,6 +108,13 @@ def rules_update(rule_id):
         flash("Rule updated." + rebuild_impact_message(changed), "success")
     except ValueError as e:
         flash(f"{e}", "error")
+    return redirect(url_for("rules.rules", rule_id=rule_id, tab="rules"))
+
+
+@rules_bp.post("/rules/<int:rule_id>/ignore")
+def rules_ignore(rule_id):
+    dismiss_rule_review(rule_id)
+    flash("Rule marked reviewed.", "info")
     return redirect(url_for("rules.rules", rule_id=rule_id, tab="rules"))
 
 

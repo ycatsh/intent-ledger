@@ -1,5 +1,6 @@
-from flask import Blueprint, jsonify, render_template, request
+from flask import Blueprint, flash, jsonify, redirect, render_template, request, url_for
 
+from intent_ledger.accounting.accounts import dismiss_account_review
 from intent_ledger.accounting.mappings import get_mappings_page, save_mappings
 from intent_ledger.accounting.payees import quick_create_payee
 from intent_ledger.routes.navigation import active_tab
@@ -23,6 +24,13 @@ def mappings():
         counterparties=counterparties,
         needs_review_count=sum(1 for a in category_accounts if a["needs_review"]),
     )
+
+
+@mappings_bp.post("/mappings/accounts/<int:account_id>/ignore")
+def mappings_ignore_account(account_id):
+    dismiss_account_review(account_id)
+    flash("Account marked reviewed.", "info")
+    return redirect(url_for("mappings.mappings", tab="categories"))
 
 
 @mappings_bp.post("/mappings/save")

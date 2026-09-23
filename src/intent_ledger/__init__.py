@@ -5,6 +5,7 @@ from flask_wtf import CSRFProtect
 from intent_ledger import config
 from intent_ledger.accounting.accounts import get_accounts_needing_review_count
 from intent_ledger.accounting.inbox import get_unknown_txn_count
+from intent_ledger.accounting.rules import get_rules_needing_review_count
 from intent_ledger.db import db
 from intent_ledger.routes import register_blueprints
 from intent_ledger.routes.flash import rebuild_impact_message
@@ -79,6 +80,7 @@ def register_context_processors(app: Flask) -> None:
             "nav_badges": {
                 "inbox.inbox": get_unknown_txn_count(),
                 "mappings.mappings": get_accounts_needing_review_count(),
+                "rules.rules": get_rules_needing_review_count(),
             }
         }
 

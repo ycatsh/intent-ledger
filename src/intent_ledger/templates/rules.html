@@ -15,6 +15,7 @@
      tabs=[("rules", "Rules"), ("transfers", "Transfers"), ("overrides", "Overrides")],
      active=active_tab,
      counts={"rules": rules|length, "transfers": transfer_rules|length, "overrides": overrides|length},
+     warn_counts={"rules": rules_needing_review_count},
      actions=actions) }}
 {% endblock %}
 
@@ -150,6 +151,9 @@
           <span class="text-text-secondary">as</span>
           <span class="font-medium">{{ rule.payee_name }}</span>
           {% endif %}
+          {% if rule.needs_review %}
+          <span class="badge border-warning bg-warning-dim text-warning">Review</span>
+          {% endif %}
         </span>
         <span class="mt-1 flex items-center gap-1 text-xs text-text-secondary">
           {{ icon("priority", "h-3.5 w-3.5") }} Priority {{ rule.priority }}
@@ -160,13 +164,27 @@
 
     {% set rule_detail %}
       {% set rule_actions %}
+        {% if editing_rule and editing_rule.needs_review %}
+        <button type="submit" form="rule-form-ignore" class="btn btn-ghost text-warning">Ignore</button>
+        {% endif %}
         {{ editor_actions(editing_rule,
            url_for('rules.rules', rule_id=editing_rule.id, test=1, tab='rules') if editing_rule else '',
            "rule-form", "Delete rule") }}
       {% endset %}
       {{ inspector_header(editing_rule.pattern if editing_rule else "New rule", rule_actions) }}
 
+      {% if editing_rule and editing_rule.needs_review %}
+      <p class="mx-3 mb-2 rounded border border-warning bg-warning-dim px-3 py-2 text-xs text-warning">
+        Auto-created from the Inbox. Check the pattern and category, or ignore to dismiss this warning.
+      </p>
+      {% endif %}
+
       <div class="flex-1 overflow-y-auto p-3">
+        {% if editing_rule and editing_rule.needs_review %}
+        <form id="rule-form-ignore" method="post" class="hidden" action="{{ url_for('rules.rules_ignore', rule_id=editing_rule.id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        </form>
+        {% endif %}
         <form id="rule-form" method="post" class="flex flex-col gap-3"
               action="{{ url_for('rules.rules_update', rule_id=editing_rule.id) if editing_rule else url_for('rules.rules_new') }}">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

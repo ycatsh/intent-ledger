@@ -10,7 +10,7 @@ from intent_ledger.accounting.ledger import rebuild_ledger
 from intent_ledger.accounting.rules import fetch_account_rules, find_matching_rule
 
 
-def test_assign_without_payee_learns_an_account_rule_and_sets_an_override(
+def test_assign_without_payee_learns_an_account_rule_flagged_for_review(
     conn, account_factory, transaction_factory
 ):
     checking_id = account_factory("Test Checking")
@@ -25,16 +25,20 @@ def test_assign_without_payee_learns_an_account_rule_and_sets_an_override(
     _assign(conn, transaction_id, "", "Test Home Loan")
 
     rules = conn.execute(
-        "SELECT match_type, pattern, priority FROM account_rules WHERE priority = 100"
+        "SELECT match_type, pattern, priority, needs_review FROM account_rules WHERE priority = 100"
     ).fetchall()
     assert len(rules) == 1
     assert rules[0]["match_type"] == "equals"
     assert rules[0]["pattern"] == "FIRST NATIONAL HOME"
+    assert rules[0]["needs_review"] == 1
 
+    # No override is created - the learned rule alone determines this (and
+    # every matching future) transaction's category, so a separate one-off
+    # override would just be redundant.
     override = conn.execute(
         "SELECT account_id FROM transactions_overrides WHERE transaction_hash = ?", (transaction_hash,)
     ).fetchone()
-    assert override is not None
+    assert override is None
 
     txn = conn.execute("SELECT payee_id FROM transactions WHERE id = ?", (transaction_id,)).fetchone()
     assert txn["payee_id"] is None

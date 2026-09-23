@@ -38,6 +38,11 @@ def create_account(name: str, account_type: str) -> int:
         return AccountRepository(conn).create(name, account_type)
 
 
+def dismiss_account_review(account_id: int) -> None:
+    with db.transaction() as conn:
+        AccountRepository(conn).mark_reviewed(account_id)
+
+
 def set_account_default_parser(account_id: int, parser_slug: str) -> None:
     with db.transaction() as conn:
         AccountRepository(conn).set_default_parser(account_id, parser_slug)

@@ -45,6 +45,9 @@ class AccountRepository:
 
         return cursor.lastrowid
 
+    def mark_reviewed(self, account_id: int) -> None:
+        self._conn.execute("UPDATE accounts SET needs_review = 0 WHERE id = ?", (account_id,))
+
     def set_default_parser(self, account_id: int, parser_slug: str) -> None:
         self._conn.execute(
             "UPDATE accounts SET default_parser_slug = ? WHERE id = ?",

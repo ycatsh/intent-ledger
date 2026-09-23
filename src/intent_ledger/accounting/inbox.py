@@ -207,7 +207,6 @@ def _assign(conn, transaction_id: int, payee_name: str, account_name: str):
             raise ValueError("Transaction not found.")
 
         learn_account_rule(conn, txn["normalized_description"] or txn["raw_description"], account_id)
-        _set_override(conn, transaction_id, account_id)
         return
 
     payee_id = get_or_create_payee(conn, payee_name, normalize(payee_name), account_id)
