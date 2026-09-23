@@ -122,6 +122,7 @@ def get_override_context(transaction_hash):
         "note": row["note"],
         "amount": row["amount"],
         "payee": row["payee"],
+        "payee_id": row["payee_id"],
         "raw_description": row["raw_description"],
         "account_id": row["override_account_id"],
         "has_override": row["override_id"] is not None,
@@ -137,6 +138,7 @@ def get_override_context(transaction_hash):
 def add_override(form):
     transaction_hash = form.get("transaction_hash", "").strip()
     account_id = form.get("account_id", type=int)
+    payee_id = form.get("payee_id", type=int)
 
     if not transaction_hash:
         raise ValueError("Select a transaction to override.")
@@ -146,6 +148,10 @@ def add_override(form):
     with db.transaction() as conn:
         SplitRepository(conn).delete(transaction_hash)
         OverrideRepository(conn).set(transaction_hash, account_id)
+        conn.execute(
+            "UPDATE transactions SET payee_id = ? WHERE transaction_hash = ?",
+            (payee_id, transaction_hash),
+        )
 
 
 def delete_override(transaction_hash):

@@ -371,6 +371,15 @@
               {% endfor %}
             </select>
           </div>
+          <div>
+            <label class="mb-1 block text-xs text-text-secondary" for="override-payee">Payee</label>
+            <select id="override-payee" name="payee_id" class="input">
+              <option value="">No payee</option>
+              {% for payee in payees %}
+              <option value="{{ payee.id }}" {{ "selected" if context.payee_id == payee.id else "" }}>{{ payee.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
           <button type="submit" class="btn text-accent self-start">Save</button>
         </form>
 
