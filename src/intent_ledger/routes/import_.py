@@ -1,6 +1,10 @@
-from flask import Blueprint, flash, redirect, render_template, request, url_for
+from flask import Blueprint, flash, jsonify, redirect, render_template, request, url_for
 
-from intent_ledger.accounting.accounts import get_active_accounts, get_all_accounts
+from intent_ledger.accounting.accounts import (
+    get_active_accounts,
+    get_all_accounts,
+    set_account_default_parser,
+)
 from intent_ledger.importer.parsers import PARSERS
 from intent_ledger.importer.uploads import (
     delete_pending_statement,
@@ -50,6 +54,18 @@ def import_upload():
         flash(error, "error")
 
     return redirect(url_for("import.import_page"))
+
+
+@import_bp.post("/import/<int:account_id>/parser")
+def import_set_parser(account_id):
+    parser_slug = request.get_json(silent=True) or {}
+    parser_slug = parser_slug.get("parser_slug")
+
+    if parser_slug not in PARSERS:
+        return jsonify(ok=False, error="Unknown parser."), 400
+
+    set_account_default_parser(account_id, parser_slug)
+    return jsonify(ok=True)
 
 
 @import_bp.post("/import/<filename>/delete")

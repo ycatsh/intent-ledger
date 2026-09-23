@@ -52,6 +52,17 @@ if (accountMenu) {
 
 updateVisibility();
 
+document.querySelectorAll("[data-dropzone-parser]").forEach((select) => {
+  select.addEventListener("change", () => {
+    const csrfToken = document.querySelector('meta[name="csrf-token"]').content;
+    fetch(`/import/${select.dataset.accountId}/parser`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken },
+      body: JSON.stringify({ parser_slug: select.value }),
+    });
+  });
+});
+
 document.querySelectorAll("[data-dropzone]").forEach((zone) => {
   const input = zone.querySelector("[data-dropzone-input]");
 

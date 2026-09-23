@@ -45,6 +45,12 @@ class AccountRepository:
 
         return cursor.lastrowid
 
+    def set_default_parser(self, account_id: int, parser_slug: str) -> None:
+        self._conn.execute(
+            "UPDATE accounts SET default_parser_slug = ? WHERE id = ?",
+            (parser_slug, account_id),
+        )
+
     def get_or_create_expense(self, name: str) -> int:
         row = self._conn.execute("SELECT id FROM accounts WHERE name = ? COLLATE NOCASE", (name,)).fetchone()
         if row:

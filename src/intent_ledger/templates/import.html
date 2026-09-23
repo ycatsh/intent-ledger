@@ -91,9 +91,9 @@
         <span class="truncate font-medium text-text">{{ account.name }}</span>
       </label>
       <span class="flex shrink-0 items-center gap-3">
-        <select name="parser_slug" class="input w-64" data-dropzone-parser>
+        <select name="parser_slug" class="input w-64" data-dropzone-parser data-account-id="{{ account.id }}">
           {% for parser in parsers %}
-          <option value="{{ parser.slug }}">{{ parser.display_name }}</option>
+          <option value="{{ parser.slug }}" {{ "selected" if parser.slug == (account.default_parser_slug or "canonical") else "" }}>{{ parser.display_name }}</option>
           {% endfor %}
         </select>
         <span class="hidden text-xs sm:inline">Drop or click to browse</span>

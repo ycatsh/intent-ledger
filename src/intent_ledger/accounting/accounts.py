@@ -38,6 +38,11 @@ def create_account(name: str, account_type: str) -> int:
         return AccountRepository(conn).create(name, account_type)
 
 
+def set_account_default_parser(account_id: int, parser_slug: str) -> None:
+    with db.transaction() as conn:
+        AccountRepository(conn).set_default_parser(account_id, parser_slug)
+
+
 def get_or_create_expense_account(conn, name: str) -> int:
     name = (name or "").strip()
     if not name:
@@ -62,6 +67,7 @@ def _rows(where="", params=()):
                 a.account_number_last4 as last4,
                 a.type,
                 a.budget,
+                a.default_parser_slug,
                 COALESCE(SUM(l.amount_cents), 0) / 100.0 balance,
                 COUNT(l.id) transactions
             FROM accounts a

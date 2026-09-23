@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS accounts (
     is_system BOOLEAN NOT NULL DEFAULT 0,
     is_active BOOLEAN NOT NULL DEFAULT 1,
     needs_review BOOLEAN NOT NULL DEFAULT 0,
+    default_parser_slug TEXT,
     goal_target_cents INTEGER,
     goal_target_date DATE,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
