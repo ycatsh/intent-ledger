@@ -48,18 +48,25 @@
 {% block content %}
   {% call modal("inbox-info-modal", "How grouping works") %}
     <p class="mb-3 text-sm text-text-secondary">
-      <span class="text-text">Payee</span> is who the money went to or came from.
-      <span class="text-text">Category</span> is the budget bucket it counts against.
-      Most payees have one default category. You can always override it per transaction.
+      <span class="text-text">Payee</span> is who the money went to. <span class="text-text">Category</span> is
+      the destination account. Usually a spending category, but it can also be an existing balance sheet
+      account (Checking, a loan, etc.) if you type its exact name. Most payees carry a default category.
     </p>
+    <p class="mt-3 mb-1 text-sm font-medium text-text">Assignments</p>
     <ul class="list-disc space-y-2 pl-4 text-sm text-text-secondary">
-      <li>Transactions group by description, biggest groups first. Assign a group once, and every matching
+      <li><span class="text-text">New payee, new category:</span> sets that payee's default.</li>
+      <li><span class="text-text">Payee, different category than its default:</span> saves a one-off override for that transaction. The payee's default stays the same.</li>
+      <li><span class="text-text">No payee:</span> saves a rule matching that description. No override, the rule alone decides it going forward. Flagged for review.</li>
+      <li><span class="text-text">Category name doesn't match an existing account:</span> creates it as an expense category, flagged for review.</li>
+    </ul>
+    <p class="mt-3 mb-1 text-sm font-medium text-text">Grouping</p>
+    <ul class="list-disc space-y-2 pl-4 text-sm text-text-secondary">
+      <li>Transactions group by description, biggest groups first. Assign a group once, every matching
         transaction gets categorized with it.</li>
       <li><span class="text-text">Intelligent grouping</span> folds together descriptions that look like the
-        same payee written slightly differently. Expand a group to check the transactions before assigning it,
-        and collapse it with the same arrow.</li>
+        same payee written slightly differently. Expand a group to check the transactions before assigning it.</li>
       <li><span class="text-text">No grouping</span> turns grouping off. Every transaction gets its own row,
-        even exact duplicates. Use it to assign transactions one at a time.</li>
+        even exact duplicates.</li>
     </ul>
   {% endcall %}
 

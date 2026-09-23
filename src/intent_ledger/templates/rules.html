@@ -117,11 +117,15 @@
       a category gets picked automatically, in the order they take effect.
     </p>
     <ul class="list-disc space-y-2 pl-4 text-sm text-text-secondary">
-      <li><span class="text-text">Rules</span> match a transaction's description (contains, prefix, suffix,
-        exact, or regex) to a category. Rules are checked in priority order, and the first match wins. A rule
-        beats a payee's own default category. A rule can also optionally name a payee - useful for a recurring
-        charge with no fixed default - which only fills in a transaction that doesn't already have one; an
-        alias match or a manual assignment always wins over it.</li>
+      <li><span class="text-text">Rules</span> match a transaction's description to a category. Checked in
+        priority order, first match wins. A rule beats a payee's default category.
+        <ul class="list-disc space-y-1 pl-4 mt-1">
+          <li><span class="text-text">Match types:</span> contains, prefix, suffix, exact, regex.</li>
+          <li><span class="text-text">Payee (optional):</span> useful for a recurring charge with no fixed
+            default. Only fills in a transaction that doesn't already have one. An alias match or manual
+            assignment always wins over it.</li>
+        </ul>
+      </li>
       <li><span class="text-text">Transfers</span> use the same kind of pattern match to flag transfer
         candidates, then pair them up with a min-cost match (the Hungarian algorithm) that weighs date and
         description similarity, so a transfer between your own accounts never shows up as income or an
