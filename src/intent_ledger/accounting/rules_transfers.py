@@ -10,7 +10,7 @@ from intent_ledger.domain.money import Money
 DATE_WEIGHT = 1.0
 DESCRIPTION_WEIGHT = 30.0
 ABSTAIN_COST = 20.0
-MAX_DATE_DIFF_DAYS = 45
+MAX_DATE_DIFF_DAYS = 7
 DISQUALIFIED_COST = 1_000_000.0
 
 
@@ -70,7 +70,7 @@ def _pair_cost(a, b):
     if date_diff > MAX_DATE_DIFF_DAYS:
         return DISQUALIFIED_COST
 
-    similarity = SequenceMatcher(None, a["raw_description"], b["raw_description"]).ratio()
+    similarity = SequenceMatcher(None, a["raw_description"].upper(), b["raw_description"].upper()).ratio()
     return date_diff * DATE_WEIGHT + (1 - similarity) * DESCRIPTION_WEIGHT
 
 
