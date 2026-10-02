@@ -1,9 +1,15 @@
 {% extends "layout.html" %}
-{% from "partials/elements.html" import toolbar, icon, modal, tab_panel %}
+{% from "partials/elements.html" import toolbar, icon, modal, tab_panel, info %}
 {% block title %}Intent: Subscriptions{% endblock %}
 
 {% block toolbar %}
   {% set actions %}
+    {{ info("subscriptions-info-modal", "How subscriptions work", [
+    ("Charges", "spending to the subscription's payee for exactly its amount, up to the day it was cancelled"),
+    ("Missed", "no charge within a few days of when the next one was due"),
+    ("Monthly cost", "each subscription converted to a monthly amount: weekly times 52 over 12, quarterly over 3, yearly over 12"),
+    ("Suggestions", "payees charged the same amount at a regular weekly, monthly, quarterly, or yearly gap"),
+    ]) }}
     <button type="button" class="btn btn-ghost text-accent" data-modal-open="add-subscription-modal">
       {{ icon("plus") }} Add subscription
     </button>

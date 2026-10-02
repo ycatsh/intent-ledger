@@ -1,5 +1,5 @@
 {% extends "layout.html" %}
-{% from "partials/elements.html" import toolbar, icon, chart_js, period_picker %}
+{% from "partials/elements.html" import toolbar, icon, chart_js, period_picker, info %}
 {% block title %}Intent: Budget{% endblock %}
 
 {% set primary = budget.primary_period %}
@@ -12,6 +12,16 @@
 
 {% block toolbar %}
   {% set actions %}
+    {{ info("budget-info-modal", "How the budget works", [
+    ("Assigned", "money you give a category for the month"),
+    ("Spent", "net spending in the category, refunds subtracted"),
+    ("Left", "everything assigned minus everything spent since the category's first budget"),
+    ("Spending before the first budget", "shows as over, since nothing was set aside for it"),
+    ("To budget", "this month's income in budgeted income accounts, minus assigned, minus spending outside the budget. It does not carry over"),
+    ("Pace", "at risk when you've spent noticeably more of what's available than of the month"),
+    ("Goal", "what the goal still needs before this month's budget, spread over the months left, counting the target month"),
+    ("3-month average", "average net spending over the last three months that have data"),
+    ]) }}
     <button type="submit" form="budget-form" name="action" value="save" class="btn btn-ghost text-accent">
       {{ icon("check") }} Save budget
     </button>

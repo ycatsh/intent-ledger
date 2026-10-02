@@ -123,6 +123,17 @@
 </dialog>
 {% endmacro %}
 
+{% macro info(id, title, items) %}
+<button type="button" class="btn btn-ghost btn-icon" data-modal-open="{{ id }}" aria-label="{{ title }}">{{ icon("info") }}</button>
+{% call modal(id, title) %}
+  <ul class="list-disc space-y-2 pl-4 text-sm text-text-secondary">
+    {% for term, text in items %}
+    <li><span class="text-text">{{ term }}</span>: {{ text }}</li>
+    {% endfor %}
+  </ul>
+{% endcall %}
+{% endmacro %}
+
 {% macro amount(cents, mask=False) %}
 <span class="mono {{ 'amount-negative' if cents < 0 else 'amount-positive' }} {{ 'amount-mask' if mask else '' }}">
   {{ (cents / 100)|money }}

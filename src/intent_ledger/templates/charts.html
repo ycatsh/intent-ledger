@@ -1,9 +1,18 @@
 {% extends "layout.html" %}
-{% from "partials/elements.html" import toolbar, chart_js %}
+{% from "partials/elements.html" import toolbar, chart_js, info %}
 {% block title %}Intent: Charts{% endblock %}
 
 {% block toolbar %}
-  {{ toolbar("Charts") }}
+  {% set actions %}
+    {{ info("charts-info-modal", "What the charts show", [
+    ("Net worth", "assets plus liabilities at each month end"),
+    ("Cash flow", "income minus expenses each month, saved or overspent"),
+    ("Fixed vs. flexible", "the share of spending that is tracked subscription charges"),
+    ("Category pace", "budgeted categories spending faster or slower than their last six months"),
+    ("Spending by weekday, transaction sizes", "expenses only"),
+    ]) }}
+  {% endset %}
+  {{ toolbar("Charts", actions=actions) }}
 {% endblock %}
 
 {% block content %}

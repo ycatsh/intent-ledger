@@ -1,9 +1,14 @@
 {% extends "layout.html" %}
-{% from "partials/elements.html" import toolbar, icon, modal, chart_js %}
+{% from "partials/elements.html" import toolbar, icon, modal, chart_js, info %}
 {% block title %}Intent: Projects{% endblock %}
 
 {% block toolbar %}
   {% set actions %}
+    {{ info("projects-info-modal", "How projects add up", [
+    ("Expenses", "net spending on transactions tagged with the project"),
+    ("Net", "project income minus project expenses"),
+    ("Overflow", "budget minus expenses. Negative means over budget"),
+    ]) }}
     {% if project %}
     <a class="btn btn-ghost" href="{{ url_for('projects.projects_export', project_id=project.id) }}">{{ icon("download") }} Export</a>
     {% endif %}
