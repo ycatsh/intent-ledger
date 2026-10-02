@@ -25,17 +25,18 @@ def _read_manifest() -> dict:
 
 
 def _write_manifest(manifest: dict):
-    MANIFEST_PATH.write_text(json.dumps(manifest))
+    staged = MANIFEST_PATH.with_name(f"{MANIFEST_PATH.name}.tmp")
+    staged.write_text(json.dumps(manifest))
+    staged.replace(MANIFEST_PATH)
 
 
 def save_uploaded_statements(files, account_id: int, parser_slug: str, user_agent: str) -> dict:
-    INGEST_DIR.mkdir(parents=True, exist_ok=True)
-
     parser = PARSERS.get(parser_slug)
 
     if parser is None:
         return {"saved": [], "errors": [f"unknown import format '{parser_slug}'"]}
 
+    INGEST_DIR.mkdir(parents=True, exist_ok=True)
     saved = []
     errors = []
 

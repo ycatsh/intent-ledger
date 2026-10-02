@@ -213,7 +213,7 @@ def _spend_flexibility(conn, months=12):
 
     recurring_rows = conn.execute(
         """
-        SELECT strftime('%Y-%m', posted_date) ym, SUM(amount_cents) total
+        SELECT strftime('%Y-%m', posted_date) ym, SUM(-amount_cents) total
         FROM subscriptions_charges
         WHERE posted_date >= ?
         GROUP BY ym

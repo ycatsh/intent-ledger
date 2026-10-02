@@ -1,6 +1,9 @@
+import re
 from dataclasses import dataclass
 
 MIRRORED_TYPES = frozenset({"expense", "income"})
+
+_AMOUNT = re.compile(r"(-?)([0-9]*)(?:\.([0-9]{1,2}))?")
 
 
 @dataclass(frozen=True, order=True, slots=True)
@@ -14,8 +17,14 @@ class Money:
     cents: int
 
     @classmethod
-    def from_dollars(cls, amount: float | None) -> "Money":
-        return cls(round((amount or 0) * 100))
+    def parse(cls, text: str) -> "Money":
+        match = _AMOUNT.fullmatch(text.strip())
+        if match is None or not (match[2] or match[3]):
+            raise ValueError(f"{text!r} is not an amount like 1234.50.")
+
+        sign, whole, fraction = match.groups()
+        cents = int(whole or 0) * 100 + int((fraction or "").ljust(2, "0"))
+        return cls(-cents if sign else cents)
 
     @property
     def amount(self) -> float:

@@ -1,16 +1,16 @@
 import csv
+import io
 import zipfile
 
 import pytest
 from openpyxl import load_workbook
+from werkzeug.datastructures import MultiDict
 
 from intent_ledger.accounting.ledger import rebuild_ledger
 from intent_ledger.accounting.projects import assign_transactions_to_project, create_project
 from intent_ledger.accounting.rules_overrides import add_override
-from intent_ledger.analytics import workbook
 from intent_ledger.analytics.workbook import (
     _expand_splits,
-    _round_money,
     _slugify,
     export_account_statement,
     export_monthly_report,
@@ -20,39 +20,27 @@ from intent_ledger.analytics.workbook import (
 from intent_ledger.settings import set_export_format
 
 
-def csv_rows(path, sheet_name):
-    with zipfile.ZipFile(path) as archive:
+def csv_rows(export, sheet_name):
+    with zipfile.ZipFile(io.BytesIO(export[1])) as archive:
         return list(csv.reader(archive.read(f"{sheet_name}.csv").decode().splitlines()))
 
 
-class FakeForm(dict):
-    def get(self, key, default=None, type=None):
-        if key not in self:
-            return default
-        value = super().get(key)
-        if type is None:
-            return value
-        try:
-            return type(value)
-        except (TypeError, ValueError):
-            return default
+class FakeForm(MultiDict):
+    def __init__(self, values=None, **fields):
+        fields = {**(values or {}), **fields}
+        super().__init__(
+            [
+                (key, str(item))
+                for key, value in fields.items()
+                for item in (value if isinstance(value, list) else [value])
+                if item is not None
+            ]
+        )
 
 
-@pytest.fixture(autouse=True)
-def redirect_exports(tmp_path, monkeypatch):
-    monkeypatch.setattr(workbook, "FINANCE_EXPORT_DIR", tmp_path / "exports")
-
-
-def sheet_rows(path, sheet_name):
-    wb = load_workbook(path)
+def sheet_rows(export, sheet_name):
+    wb = load_workbook(io.BytesIO(export[1]))
     return [tuple(row) for row in wb[sheet_name].iter_rows(values_only=True)]
-
-
-def test_round_money_normalizes_negative_zero_to_positive_zero():
-    assert _round_money(-0.001) == 0.0
-    assert str(_round_money(-0.001)) == "0.0"
-    assert _round_money(12.345) == 12.35
-    assert _round_money(-12.345) == -12.35
 
 
 def test_slugify_lowercases_and_replaces_non_alphanumerics():
@@ -108,9 +96,9 @@ def test_export_account_statement_running_balance_uses_full_unfiltered_ledger(
     transaction_factory(checking_id, "2026-01-10", -2500, "GROCERY RUN")
     rebuild_ledger()
 
-    path = export_account_statement(checking_id, search="category:groceries")
+    export = export_account_statement(checking_id, search="category:groceries")
 
-    rows = sheet_rows(path, "All")
+    rows = sheet_rows(export, "All")
     header, *data_rows = rows
 
     assert header == ("Date", "Category", "Type", "Payee", "Debit", "Credit", "Balance")
@@ -134,16 +122,16 @@ def test_export_account_statement_excludes_equity_from_filtered_rows_but_not_bal
     add_override(FakeForm({"transaction_hash": opening_hash, "account_id": equity_id}))
     rebuild_ledger()
 
-    path = export_account_statement(checking_id)
+    export = export_account_statement(checking_id)
 
-    rows = sheet_rows(path, "All")
+    rows = sheet_rows(export, "All")
     _header, *data_rows = rows
 
     assert len(data_rows) == 1
     assert data_rows[0][0] == "2026-01-05"
     assert data_rows[0][6] == pytest.approx(480.0)
 
-    summary_rows = sheet_rows(path, "Balance Sheet")
+    summary_rows = sheet_rows(export, "Balance Sheet")
     summary = {}
     for r in summary_rows:
         if r and r[0]:
@@ -175,11 +163,30 @@ def test_export_account_statement_by_category_sheet_totals_match_transactions(
     transaction_factory(checking_id, "2026-01-10", -2500, "GROCERY RUN")
     rebuild_ledger()
 
-    path = export_account_statement(checking_id)
+    export = export_account_statement(checking_id)
 
-    rows = sheet_rows(path, "By Category")
+    rows = sheet_rows(export, "By Category")
     row_by_first_cell = {r[0]: r for r in rows if r[0]}
     assert row_by_first_cell["Grand Total"][1] == pytest.approx(-40.0)
+
+
+def test_export_totals_are_exact_to_the_cent(conn, account_factory, transaction_factory):
+    checking_id = account_factory("Test Checking")
+    groceries_id = account_factory("Test Groceries", type="expense")
+    conn.execute(
+        "INSERT INTO account_rules (match_type, pattern, account_id) VALUES ('contains', 'GROCERY', ?)",
+        (groceries_id,),
+    )
+    for day, cents in ((5, -10), (6, -20), (7, -30), (8, -40)):
+        transaction_factory(checking_id, f"2026-01-0{day}", cents, "GROCERY RUN")
+    rebuild_ledger()
+
+    export = export_account_statement(checking_id)
+
+    by_category = {r[0]: r for r in sheet_rows(export, "By Category") if r[0]}
+    balances = [r[6] for r in sheet_rows(export, "All")[1:]]
+    assert by_category["Grand Total"][1] == -1.0
+    assert balances == [-0.1, -0.3, -0.6, -1.0]
 
 
 def test_export_monthly_report_has_expected_sheets_and_category_totals(
@@ -197,12 +204,12 @@ def test_export_monthly_report_has_expected_sheets_and_category_totals(
     transaction_factory(checking_id, "2026-03-05", -1500, "GROCERY RUN")
     rebuild_ledger()
 
-    path = export_monthly_report(2026, 3)
+    export = export_monthly_report(2026, 3)
 
-    wb = load_workbook(path)
+    wb = load_workbook(io.BytesIO(export[1]))
     assert set(wb.sheetnames) == {"Summary", "Transactions", "Payees", "Inflows"}
 
-    summary = sheet_rows(path, "Summary")
+    summary = sheet_rows(export, "Summary")
     assert ("Test Groceries", 15.0, 1, 100.0) in summary
 
 
@@ -222,13 +229,13 @@ def test_export_monthly_report_as_csv_zips_one_csv_per_sheet(conn, account_facto
     transaction_factory(checking_id, "2026-03-05", -1500, "GROCERY RUN")
     rebuild_ledger()
 
-    path = export_monthly_report(2026, 3)
+    export = export_monthly_report(2026, 3)
 
-    assert path.suffix == ".zip"
-    with zipfile.ZipFile(path) as archive:
+    assert export[0].endswith(".zip")
+    with zipfile.ZipFile(io.BytesIO(export[1])) as archive:
         assert set(archive.namelist()) == {"summary.csv", "transactions.csv", "payees.csv", "inflows.csv"}
 
-    assert ["Test Groceries", "15.0", "1", "100.0"] in csv_rows(path, "summary")
+    assert ["Test Groceries", "15.0", "1", "100.0"] in csv_rows(export, "summary")
 
 
 def test_export_account_statement_as_csv_preserves_all_sheets(conn, account_factory, transaction_factory):
@@ -247,12 +254,12 @@ def test_export_account_statement_as_csv_preserves_all_sheets(conn, account_fact
     transaction_factory(checking_id, "2026-01-05", -1500, "GROCERY RUN")
     rebuild_ledger()
 
-    path = export_account_statement(checking_id)
+    export = export_account_statement(checking_id)
 
-    with zipfile.ZipFile(path) as archive:
+    with zipfile.ZipFile(io.BytesIO(export[1])) as archive:
         assert set(archive.namelist()) == {"balance-sheet.csv", "cashflow.csv", "by-category.csv", "all.csv"}
 
-    header, *data_rows = csv_rows(path, "all")
+    header, *data_rows = csv_rows(export, "all")
     assert header == ["Date", "Category", "Type", "Payee", "Debit", "Credit", "Balance"]
     assert data_rows[0][0] == "2026-01-05"
 
@@ -271,9 +278,9 @@ def test_export_yearly_report_covers_the_full_year(conn, account_factory, transa
     transaction_factory(checking_id, "2026-11-05", -2500, "GROCERY RUN")
     rebuild_ledger()
 
-    path = export_yearly_report(2026)
+    export = export_yearly_report(2026)
 
-    txns = sheet_rows(path, "Transactions")
+    txns = sheet_rows(export, "Transactions")
     dates = {row[0] for row in txns[1:]}
     assert dates == {"2026-01-05", "2026-11-05"}
 
@@ -297,9 +304,9 @@ def test_export_project_report_includes_only_assigned_transactions(
     project_id = create_project(FakeForm({"name": "Kitchen Remodel"}))
     assign_transactions_to_project([in_project_hash], project_id)
 
-    path = export_project_report(project_id)
+    export = export_project_report(project_id)
 
-    txns = sheet_rows(path, "Transactions")
+    txns = sheet_rows(export, "Transactions")
     assert len(txns) == 2
     assert txns[1][0] == "2026-01-05"
 

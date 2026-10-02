@@ -8,6 +8,7 @@ deployment steps to keep in mind assuming no auth:
 - Run it only on `localhost` or a private/VPN-only network.
 - If you need remote access, put it behind your own authenticating reverse proxy rather than relying on anything in this app.
 - Always run behind TLS if reachable over any network you don't fully control.
+- Behind a reverse proxy, set `TRUSTED_PROXIES` to the number of proxies in front of the app so it reads the client address and https from `X-Forwarded-For` and `X-Forwarded-Proto`. Leave it at 0 when nothing sits in front, because any client can send those headers.
 
 <br>
 

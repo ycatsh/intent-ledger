@@ -1,30 +1,30 @@
 import re
 
 import pytest
+from werkzeug.datastructures import MultiDict
 
 from intent_ledger.accounting.ledger import rebuild_ledger
 from intent_ledger.accounting.rules_overrides import (
     add_override,
     delete_override,
     get_override_account_id,
+    get_override_context,
+    get_overrides,
     save_split,
 )
 
 
-class FakeForm(dict):
-    def get(self, key, default=None, type=None):
-        if key not in self:
-            return default
-        value = super().get(key)
-        if type is None:
-            return value
-        try:
-            return type(value)
-        except (TypeError, ValueError):
-            return default
-
-    def getlist(self, key, type=str):
-        return [type(v) for v in self.get(key, [])]
+class FakeForm(MultiDict):
+    def __init__(self, values=None, **fields):
+        fields = {**(values or {}), **fields}
+        super().__init__(
+            [
+                (key, str(item))
+                for key, value in fields.items()
+                for item in (value if isinstance(value, list) else [value])
+                if item is not None
+            ]
+        )
 
 
 def splits_for(conn, transaction_hash):
@@ -339,3 +339,41 @@ def test_save_split_rejects_a_line_missing_its_category_or_amount(conn, account_
                 }
             )
         )
+
+
+def test_an_override_on_a_matched_transfer_is_flagged_as_ignored(
+    conn, account_factory, transaction_factory, transfer_rule_factory
+):
+    checking = account_factory("Test Checking")
+    savings = account_factory("Test Savings")
+    groceries = account_factory("Test Groceries", type="expense")
+    transfer_rule_factory("MOVE")
+    out_hash = transaction_factory(checking, "2026-01-05", -5000, "MOVE TO SAVINGS")
+    transaction_factory(savings, "2026-01-05", 5000, "MOVE TO SAVINGS")
+    lone_hash = transaction_factory(checking, "2026-01-06", -700, "CORNER SHOP")
+
+    add_override(FakeForm({"transaction_hash": out_hash, "account_id": groceries}))
+    add_override(FakeForm({"transaction_hash": lone_hash, "account_id": groceries}))
+
+    flags = {row["transaction_hash"]: row["ignored_by_transfer"] for row in get_overrides()}
+    assert flags == {out_hash: True, lone_hash: False}
+    assert get_override_context(out_hash)["ignored_by_transfer"] is True
+
+
+@pytest.mark.parametrize(
+    "form",
+    [
+        {"transaction_hash": "does-not-exist", "account_id": 1},
+        {"transaction_hash": "HASH", "account_id": 999999},
+        {"transaction_hash": "HASH", "account_id": "abc"},
+        {"transaction_hash": "HASH", "account_id": "ACCOUNT", "payee_id": 999999},
+    ],
+)
+def test_add_override_rejects_rows_that_do_not_exist(conn, account_factory, transaction_factory, form):
+    groceries = account_factory("Test Groceries", type="expense")
+    checking = account_factory("Test Checking")
+    txn_hash = transaction_factory(checking, "2026-01-05", -450, "COFFEE SHOP")
+    values = {key: {"HASH": txn_hash, "ACCOUNT": groceries}.get(value, value) for key, value in form.items()}
+
+    with pytest.raises(ValueError):
+        add_override(FakeForm(values))

@@ -1,5 +1,6 @@
 from datetime import date, timedelta
 
+from intent_ledger import forms
 from intent_ledger.accounting.repositories.projects import ProjectRepository
 from intent_ledger.analytics.reports import percent_of_total
 from intent_ledger.db import db
@@ -7,19 +8,26 @@ from intent_ledger.settings import today
 
 
 def create_project(form) -> int:
-    name = form.get("name", "").strip()
+    name = forms.text(form, "name")
     if not name:
         raise ValueError("Project name is required.")
 
-    project_type = form.get("type", "").strip() or None
-    start_date = form.get("start_date") or None
-    end_date = form.get("end_date") or None
-    notes = form.get("notes", "").strip() or None
-    budget = form.get("budget", type=float)
-    budget_cents = round(budget * 100) if budget else None
+    project_type = forms.text(form, "type") or None
+    start_date = forms.optional_iso_date(form, "start_date", "Start date")
+    end_date = forms.optional_iso_date(form, "end_date", "End date")
+    notes = forms.text(form, "notes") or None
+
+    budget = forms.optional_money(form, "budget", "Budget")
+    if budget is not None and budget.cents < 0:
+        raise ValueError("Budget can't be negative.")
+    budget_cents = budget.cents if budget and budget.cents else None
 
     with db.transaction() as conn:
-        return ProjectRepository(conn).create(name, project_type, start_date, end_date, budget_cents, notes)
+        repo = ProjectRepository(conn)
+        if repo.get_id_by_name(name) is not None:
+            raise ValueError(f"A project named {name!r} already exists.")
+
+        return repo.create(name, project_type, start_date, end_date, budget_cents, notes)
 
 
 def delete_project(project_id: int):
@@ -369,6 +377,14 @@ def assign_transactions_to_project(transaction_hashes: list[str], project_id: in
 
         if repo.get(project_id) is None:
             raise ValueError("Project not found.")
+
+        placeholders = ",".join("?" * len(transaction_hashes))
+        known = conn.execute(
+            f"SELECT COUNT(*) AS n FROM transactions WHERE transaction_hash IN ({placeholders})",
+            transaction_hashes,
+        ).fetchone()["n"]
+        if known != len(set(transaction_hashes)):
+            raise ValueError("Transaction not found.")
 
         repo.assign_transactions(transaction_hashes, project_id)
 

@@ -23,6 +23,7 @@ class CounterEntry:
     account_id: int
     amount_cents: int
     description: str
+    transaction_id: int | None = None
 
 
 def resolve(conn, txn, rules, transfer_pairs):
@@ -45,7 +46,14 @@ def _resolve_transfer(txn, counterpart):
     if txn["amount_cents"] > 0:
         return SKIP
 
-    return [CounterEntry(counterpart["account_id"], -txn["amount_cents"], txn["raw_description"])]
+    return [
+        CounterEntry(
+            counterpart["account_id"],
+            counterpart["amount_cents"],
+            counterpart["raw_description"],
+            counterpart["id"],
+        )
+    ]
 
 
 def _resolve_splits(txn, splits):

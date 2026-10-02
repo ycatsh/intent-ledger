@@ -1,4 +1,5 @@
 import pytest
+from werkzeug.datastructures import MultiDict
 
 from intent_ledger.accounting.budget import (
     delete_goal,
@@ -10,17 +11,17 @@ from intent_ledger.accounting.ledger import rebuild_ledger
 from intent_ledger.accounting.repositories.budget import BudgetRepository
 
 
-class FakeForm(dict):
-    def get(self, key, default=None, type=None):
-        if key not in self:
-            return default
-        value = super().get(key)
-        if type is None:
-            return value
-        try:
-            return type(value)
-        except (TypeError, ValueError):
-            return default
+class FakeForm(MultiDict):
+    def __init__(self, values=None, **fields):
+        fields = {**(values or {}), **fields}
+        super().__init__(
+            [
+                (key, str(item))
+                for key, value in fields.items()
+                for item in (value if isinstance(value, list) else [value])
+                if item is not None
+            ]
+        )
 
 
 @pytest.fixture
@@ -242,6 +243,56 @@ def test_move_budget_rejects_a_self_transfer(conn, category):
     assert moved == 0.0
 
 
+def test_carry_in_crosses_a_year_boundary(conn, category, account_factory, transaction_factory):
+    groceries = category("Test Groceries")
+    checking = account_factory("Test Checking")
+    set_budget(conn, groceries, "2025-12-01", 10000)
+    set_budget(conn, groceries, "2026-01-01", 10000)
+    conn.execute(
+        "INSERT INTO account_rules (match_type, pattern, account_id) VALUES ('contains', 'COFFEE', ?)",
+        (groceries,),
+    )
+    transaction_factory(checking, "2025-12-30", -3000, "COFFEE")
+    rebuild_ledger()
+
+    row = row_for(get_budget_page(2026, 1), "Test Groceries")
+
+    assert row["carry_in"] == 70.0
+    assert row["rollover"] == 170.0
+
+
+def test_move_budget_only_moves_into_a_budget_category(conn, category, account_factory):
+    source = category("Test Groceries")
+    checking = account_factory("Test Checking")
+    set_budget(conn, source, "2026-03-01", 10000)
+
+    with pytest.raises(ValueError):
+        move_budget(
+            FakeForm({f"move_to_{source}": checking, f"move_amount_{source}": "50"}), source, "2026-03-01"
+        )
+
+
+@pytest.mark.parametrize("amount", ["-50", "0", "abc", "nan"])
+def test_move_budget_rejects_an_amount_that_is_not_positive(conn, category, amount):
+    source = category("Test Groceries")
+    destination = category("Test Dining")
+    set_budget(conn, source, "2026-03-01", 10000)
+
+    with pytest.raises(ValueError):
+        move_budget(
+            FakeForm({f"move_to_{source}": destination, f"move_amount_{source}": amount}),
+            source,
+            "2026-03-01",
+        )
+
+
+def test_a_goal_date_must_be_a_date(conn, category):
+    rent = category("Rent")
+
+    with pytest.raises(ValueError):
+        save_goal(FakeForm({f"goal_amount_{rent}": "2000", f"goal_date_{rent}": "soon"}), rent)
+
+
 def test_status_is_green_when_nothing_is_spent(conn, category):
     groceries = category("Test Groceries")
     set_budget(conn, groceries, "2026-03-01", 50000)
@@ -350,3 +401,21 @@ def test_goal_actions_save_and_delete(client, conn, category):
         ]
         is None
     )
+
+
+@pytest.mark.parametrize("value", ["1,000", "abc", "nan", "-5"])
+def test_a_malformed_budget_is_rejected_not_saved_as_zero(client, conn, category, value):
+    dining = category("Test Dining")
+    set_budget(conn, dining, "2026-03-01", 5000)
+
+    response = client.post("/budget", data={"action": "save", f"budget_{dining}": value})
+
+    assert response.status_code == 302
+    row = conn.execute(
+        "SELECT amount_cents FROM budgets WHERE account_id = ? AND period = '2026-03-01'", (dining,)
+    ).fetchone()
+    assert row["amount_cents"] == 5000
+
+
+def test_a_malformed_budget_action_is_a_message_not_a_crash(client):
+    assert client.post("/budget", data={"action": "delete_goal:abc"}).status_code == 302

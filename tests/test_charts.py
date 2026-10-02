@@ -173,34 +173,13 @@ def test_category_pace_flags_overspending_and_underspending_categories(
 def test_spend_flexibility_splits_recurring_from_discretionary(conn, account_factory, transaction_factory):
     checking_id = account_factory("Test Checking")
     subs_id = account_factory("Test Subscriptions", type="expense")
-
-    payee_cursor = conn.execute(
-        "INSERT INTO payees (canonical_name, normalized_name, account_id) VALUES ('Netflix', 'netflix', ?)",
-        (subs_id,),
-    )
-    payee_id = payee_cursor.lastrowid
-    conn.commit()
+    payee_id = _netflix_subscription(conn, subs_id)
 
     month_start = _today().replace(day=1)
     sub_hash = transaction_factory(checking_id, month_start.isoformat(), -1500, "NETFLIX")
     transaction_factory(checking_id, month_start.isoformat(), -4000, "GROCERY STORE")
+    conn.execute("UPDATE transactions SET payee_id = ? WHERE transaction_hash = ?", (payee_id, sub_hash))
     rebuild_ledger()
-
-    sub_txn_id = conn.execute(
-        "SELECT id FROM transactions WHERE transaction_hash = ?", (sub_hash,)
-    ).fetchone()["id"]
-
-    sub_cursor = conn.execute(
-        "INSERT INTO subscriptions (payee_id, account_id, name, amount_cents, cadence, first_seen_date) "
-        "VALUES (?, ?, 'Netflix', 1500, 'monthly', ?)",
-        (payee_id, subs_id, month_start.isoformat()),
-    )
-    conn.execute(
-        "INSERT INTO subscriptions_charges (subscription_id, transaction_id, amount_cents, posted_date) "
-        "VALUES (?, ?, 1500, ?)",
-        (sub_cursor.lastrowid, sub_txn_id, month_start.isoformat()),
-    )
-    conn.commit()
 
     result = _spend_flexibility(conn, months=1)
 
@@ -212,51 +191,29 @@ def test_spend_flexibility_splits_recurring_from_discretionary(conn, account_fac
     assert discretionary["data"] == [40.0]
 
 
-def test_spend_flexibility_floors_discretionary_at_zero(conn, account_factory):
-    """A subscriptions_charges total can, in principle, exceed the expense
-    total counted for the same month (e.g. a subscription charge posted to
-    a non-expense account) - discretionary must never go negative.
-    """
+def test_spend_flexibility_counts_a_charge_only_once_the_ledger_has_it(
+    conn, account_factory, transaction_factory
+):
     checking_id = account_factory("Test Checking")
     subs_id = account_factory("Test Subscriptions", type="expense")
+    payee_id = _netflix_subscription(conn, subs_id)
 
-    payee_cursor = conn.execute(
-        "INSERT INTO payees (canonical_name, normalized_name, account_id) VALUES ('Netflix', 'netflix', ?)",
-        (subs_id,),
-    )
-    payee_id = payee_cursor.lastrowid
-    conn.commit()
-
-    month_start = _today().replace(day=1)
-
-    conn.execute(
-        """
-        INSERT INTO transactions (
-            account_id, posted_date, amount_cents, raw_description, transaction_hash
-        )
-        VALUES (?, ?, -1500, 'NETFLIX', 'flex-floor-test')
-        """,
-        (checking_id, month_start.isoformat()),
-    )
-    txn_id = conn.execute(
-        "SELECT id FROM transactions WHERE transaction_hash = 'flex-floor-test'"
-    ).fetchone()["id"]
-
-    sub_cursor = conn.execute(
-        "INSERT INTO subscriptions (payee_id, account_id, name, amount_cents, cadence, first_seen_date) "
-        "VALUES (?, ?, 'Netflix', 1500, 'monthly', ?)",
-        (payee_id, subs_id, month_start.isoformat()),
-    )
-    conn.execute(
-        "INSERT INTO subscriptions_charges (subscription_id, transaction_id, amount_cents, posted_date) "
-        "VALUES (?, ?, 1500, ?)",
-        (sub_cursor.lastrowid, txn_id, month_start.isoformat()),
-    )
-    conn.commit()
-    # Deliberately not rebuilding the ledger, so no expense-account total
-    # exists for this month at all.
+    sub_hash = transaction_factory(checking_id, _today().replace(day=1).isoformat(), -1500, "NETFLIX")
+    conn.execute("UPDATE transactions SET payee_id = ? WHERE transaction_hash = ?", (payee_id, sub_hash))
 
     result = _spend_flexibility(conn, months=1)
 
-    discretionary = next(d for d in result["datasets"] if d["label"] == "Discretionary")
-    assert discretionary["data"] == [0.0]
+    assert [d["data"] for d in result["datasets"]] == [[0.0], [0.0]]
+
+
+def _netflix_subscription(conn, subs_id):
+    payee_id = conn.execute(
+        "INSERT INTO payees (canonical_name, normalized_name, account_id) VALUES ('Netflix', 'netflix', ?)",
+        (subs_id,),
+    ).lastrowid
+    conn.execute(
+        "INSERT INTO subscriptions (payee_id, account_id, name, amount_cents, cadence, first_seen_date) "
+        "VALUES (?, ?, 'Netflix', -1500, 'monthly', ?)",
+        (payee_id, subs_id, _today().replace(day=1).isoformat()),
+    )
+    return payee_id

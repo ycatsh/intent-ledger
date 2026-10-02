@@ -1,6 +1,6 @@
 from calendar import month_name, monthrange
 
-from flask import Blueprint, redirect, render_template, request, send_file, session, url_for
+from flask import Blueprint, redirect, render_template, request, session, url_for
 
 from intent_ledger.analytics.charts import PALETTE, cashflow_chart, line_chart
 from intent_ledger.analytics.reports import (
@@ -11,6 +11,7 @@ from intent_ledger.analytics.reports import (
     get_payee_summary,
 )
 from intent_ledger.analytics.workbook import export_monthly_report, export_yearly_report
+from intent_ledger.routes.downloads import send_export
 from intent_ledger.routes.period import get_period, shift_period, validate_date_range, validate_year
 from intent_ledger.settings import today
 
@@ -80,12 +81,10 @@ def expenses_export():
     if mode == "year":
         year = request.args.get("year", type=int) or today().year
         validate_year(year)
-        path = export_yearly_report(year)
-    else:
-        year, month = get_period()
-        path = export_monthly_report(year, month)
+        return send_export(export_yearly_report(year))
 
-    return send_file(path, as_attachment=True, download_name=path.name)
+    year, month = get_period()
+    return send_export(export_monthly_report(year, month))
 
 
 @expenses_bp.post("/expenses/current")

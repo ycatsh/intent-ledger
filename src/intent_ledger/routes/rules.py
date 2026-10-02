@@ -29,7 +29,7 @@ from intent_ledger.accounting.rules_transfers import (
 )
 from intent_ledger.routes.flash import rebuild_impact_message
 from intent_ledger.routes.navigation import redirect_back
-from intent_ledger.service import rebuild_ledger_and_subscriptions
+from intent_ledger.service import ledger_change
 
 rules_bp = Blueprint("rules", __name__)
 
@@ -91,9 +91,9 @@ def rules():
 @rules_bp.post("/rules/new")
 def rules_new():
     try:
-        new_id = add_account_rule(request.form)
-        changed = rebuild_ledger_and_subscriptions()
-        flash("Rule added." + rebuild_impact_message(changed), "success")
+        with ledger_change() as change:
+            new_id = add_account_rule(request.form)
+        flash("Rule added." + rebuild_impact_message(change.recategorized), "success")
         return redirect(url_for("rules.rules", rule_id=new_id, tab="rules"))
     except ValueError as e:
         flash(f"{e}", "error")
@@ -103,9 +103,9 @@ def rules_new():
 @rules_bp.post("/rules/<int:rule_id>/update")
 def rules_update(rule_id):
     try:
-        update_account_rule(rule_id, request.form)
-        changed = rebuild_ledger_and_subscriptions()
-        flash("Rule updated." + rebuild_impact_message(changed), "success")
+        with ledger_change() as change:
+            update_account_rule(rule_id, request.form)
+        flash("Rule updated." + rebuild_impact_message(change.recategorized), "success")
     except ValueError as e:
         flash(f"{e}", "error")
     return redirect(url_for("rules.rules", rule_id=rule_id, tab="rules"))
@@ -120,18 +120,18 @@ def rules_ignore(rule_id):
 
 @rules_bp.post("/rules/<int:rule_id>/delete")
 def rules_delete(rule_id):
-    delete_account_rule(rule_id)
-    changed = rebuild_ledger_and_subscriptions()
-    flash("Rule removed." + rebuild_impact_message(changed), "info")
+    with ledger_change() as change:
+        delete_account_rule(rule_id)
+    flash("Rule removed." + rebuild_impact_message(change.recategorized), "info")
     return redirect(url_for("rules.rules", tab="rules"))
 
 
 @rules_bp.post("/transfer-rules/new")
 def transfer_rules_new():
     try:
-        new_id = add_transfer_rule(request.form)
-        changed = rebuild_ledger_and_subscriptions()
-        flash("Transfer rule added." + rebuild_impact_message(changed), "success")
+        with ledger_change() as change:
+            new_id = add_transfer_rule(request.form)
+        flash("Transfer rule added." + rebuild_impact_message(change.recategorized), "success")
         return redirect(url_for("rules.rules", transfer_rule_id=new_id, tab="transfers"))
     except ValueError as e:
         flash(f"{e}", "error")
@@ -141,9 +141,9 @@ def transfer_rules_new():
 @rules_bp.post("/transfer-rules/<int:rule_id>/update")
 def transfer_rules_update(rule_id):
     try:
-        update_transfer_rule(rule_id, request.form)
-        changed = rebuild_ledger_and_subscriptions()
-        flash("Transfer rule updated." + rebuild_impact_message(changed), "success")
+        with ledger_change() as change:
+            update_transfer_rule(rule_id, request.form)
+        flash("Transfer rule updated." + rebuild_impact_message(change.recategorized), "success")
     except ValueError as e:
         flash(f"{e}", "error")
     return redirect(url_for("rules.rules", transfer_rule_id=rule_id, tab="transfers"))
@@ -151,9 +151,9 @@ def transfer_rules_update(rule_id):
 
 @rules_bp.post("/transfer-rules/<int:rule_id>/delete")
 def transfer_rules_delete(rule_id):
-    delete_transfer_rule(rule_id)
-    changed = rebuild_ledger_and_subscriptions()
-    flash("Transfer rule removed." + rebuild_impact_message(changed), "info")
+    with ledger_change() as change:
+        delete_transfer_rule(rule_id)
+    flash("Transfer rule removed." + rebuild_impact_message(change.recategorized), "info")
     return redirect(url_for("rules.rules", tab="transfers"))
 
 
@@ -162,14 +162,14 @@ def overrides_add():
     transaction_hash = request.form.get("transaction_hash", "")
 
     try:
-        if request.form.get("mode") == "split":
-            save_split(request.form)
-            message = "Transaction split."
-        else:
-            add_override(request.form)
-            message = "Override added."
-        changed = rebuild_ledger_and_subscriptions()
-        flash(message + rebuild_impact_message(changed), "success")
+        with ledger_change() as change:
+            if request.form.get("mode") == "split":
+                save_split(request.form)
+                message = "Transaction split."
+            else:
+                add_override(request.form)
+                message = "Override added."
+        flash(message + rebuild_impact_message(change.recategorized), "success")
     except ValueError as e:
         flash(f"{e}", "error")
         return redirect(url_for("rules.rules", transaction_hash=transaction_hash, tab="overrides"))
@@ -179,7 +179,7 @@ def overrides_add():
 
 @rules_bp.post("/overrides/<transaction_hash>/delete")
 def overrides_delete(transaction_hash):
-    delete_override(transaction_hash)
-    changed = rebuild_ledger_and_subscriptions()
-    flash("Override removed." + rebuild_impact_message(changed), "info")
+    with ledger_change() as change:
+        delete_override(transaction_hash)
+    flash("Override removed." + rebuild_impact_message(change.recategorized), "info")
     return redirect_back("rules.rules", tab="overrides")

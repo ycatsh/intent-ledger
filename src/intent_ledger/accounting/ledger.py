@@ -1,13 +1,8 @@
-import uuid
 from collections import defaultdict
 
 from intent_ledger.accounting import resolution
 from intent_ledger.accounting.rules import fetch_account_rules, find_matching_rule
-from intent_ledger.accounting.rules_transfers import (
-    fetch_transfer_rules,
-    is_transfer_candidate,
-    match_transfers,
-)
+from intent_ledger.accounting.rules_transfers import match_transfer_pairs
 from intent_ledger.db import db
 
 
@@ -20,7 +15,7 @@ def rebuild_ledger() -> int:
 
         rules = fetch_account_rules(conn)
         transactions = _load_transactions(conn)
-        transfer_pairs = _match_transfer_pairs(conn, transactions)
+        transfer_pairs = match_transfer_pairs(conn, transactions)
 
         for txn in transactions:
             _create_group_for_transaction(conn, txn, rules, transfer_pairs)
@@ -45,12 +40,6 @@ def _load_transactions(conn):
     """).fetchall()
 
 
-def _match_transfer_pairs(conn, transactions):
-    transfer_rules = fetch_transfer_rules(conn)
-    candidates = [t for t in transactions if is_transfer_candidate(transfer_rules, t["raw_description"])]
-    return match_transfers(candidates)
-
-
 def _create_group_for_transaction(conn, txn, rules, transfer_pairs):
     _backfill_rule_payee(conn, txn, rules)
 
@@ -58,10 +47,11 @@ def _create_group_for_transaction(conn, txn, rules, transfer_pairs):
     if counter_entries is resolution.SKIP:
         return
 
-    group_id = uuid.uuid4().hex
+    group_id = txn["id"]
     _create_entry(conn, group_id, txn["id"], txn["account_id"], txn["amount_cents"], txn["raw_description"])
     for entry in counter_entries:
-        _create_entry(conn, group_id, txn["id"], entry.account_id, entry.amount_cents, entry.description)
+        transaction_id = entry.transaction_id or txn["id"]
+        _create_entry(conn, group_id, transaction_id, entry.account_id, entry.amount_cents, entry.description)
 
 
 def _backfill_rule_payee(conn, txn, rules):
@@ -130,10 +120,10 @@ def _find_unbalanced_groups(conn):
 
 def _category_snapshot(conn):
     rows = conn.execute("""
-        SELECT l.transaction_id, l.account_id
-        FROM ledger l
-        JOIN transactions t ON t.id = l.transaction_id
-        WHERE l.account_id != t.account_id
+        SELECT own.transaction_id, other.account_id
+        FROM ledger own
+        JOIN transactions t ON t.id = own.transaction_id AND t.account_id = own.account_id
+        JOIN ledger other ON other.group_id = own.group_id AND other.account_id != own.account_id
     """).fetchall()
 
     snapshot = defaultdict(set)

@@ -1,16 +1,31 @@
 import csv
 from datetime import date, datetime
-from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 import xlrd
 from openpyxl import load_workbook
 
+from intent_ledger.domain.money import Money
 from intent_ledger.importer.parsers.base import ParsedStatement, ParsedTransaction
 
 REQUIRED_COLUMNS = ("date", "description", "withdrawal", "deposit")
 OPTIONAL_COLUMNS = ("balance",)
 ALL_COLUMNS = REQUIRED_COLUMNS + OPTIONAL_COLUMNS
+
+DATE_FORMATS = (
+    "%Y-%m-%d",
+    "%Y/%m/%d",
+    "%d-%m-%Y",
+    "%d/%m/%Y",
+    "%d.%m.%Y",
+    "%d %b %Y",
+    "%d %B %Y",
+    "%d-%b-%Y",
+    "%d-%B-%Y",
+    "%m-%d-%Y",
+    "%m/%d/%Y",
+    "%Y%m%d",
+)
 
 
 class CanonicalParser:
@@ -47,15 +62,19 @@ class CanonicalParser:
 
         column_index = {name: header.index(name) for name in ALL_COLUMNS if name in header}
 
+        body = [
+            (row_number, row)
+            for row_number, row in enumerate(rows[1:], start=2)
+            if any(cell.strip() for cell in row if cell is not None)
+        ]
+        date_format = _date_format([_cell(row, column_index, "date").strip() for _, row in body])
+
         transactions: list[ParsedTransaction] = []
         row_errors: list[str] = []
 
-        for row_number, row in enumerate(rows[1:], start=2):
-            if not any(cell.strip() for cell in row if cell is not None):
-                continue
-
+        for row_number, row in body:
             try:
-                transactions.append(_parse_row(row, column_index))
+                transactions.append(_parse_row(row, column_index, date_format))
             except ValueError as exc:
                 row_errors.append(f"row {row_number}: {exc}")
 
@@ -86,14 +105,24 @@ def _read_xlsx_rows(path: Path) -> list[list[str]]:
     workbook = load_workbook(path, read_only=True, data_only=True)
 
     try:
-        sheet = workbook.active
-        rows = [
-            [cell if cell is not None else "" for cell in row] for row in sheet.iter_rows(values_only=True)
+        return [
+            [_xlsx_cell_to_str(cell) for cell in row] for row in workbook.active.iter_rows(values_only=True)
         ]
     finally:
         workbook.close()
 
-    return [[str(cell) for cell in row] for row in rows]
+
+def _xlsx_cell_to_str(cell) -> str:
+    if cell is None:
+        return ""
+
+    if isinstance(cell, datetime):
+        return cell.date().isoformat()
+
+    if isinstance(cell, date):
+        return cell.isoformat()
+
+    return str(cell)
 
 
 def _read_xls_rows(path: Path) -> list[list[str]]:
@@ -119,16 +148,35 @@ def _xls_cell_to_str(cell, datemode: int) -> str:
     return str(cell.value)
 
 
-def _parse_row(row: list[str], column_index: dict[str, int]) -> ParsedTransaction:
-    posted_date = _parse_date(_cell(row, column_index, "date"))
+def _date_format(raw_dates: list[str]) -> str:
+    """Pick the one format that reads the most dates in the file.
+
+    Choosing per row would read 03/04/2026 as April 3 and 12/31/2026 as
+    December 31 in the same file. Ties go to the earlier, day-first format.
+    """
+    return max(DATE_FORMATS, key=lambda fmt: sum(_is_date(raw, fmt) for raw in raw_dates))
+
+
+def _is_date(raw: str, fmt: str) -> bool:
+    try:
+        datetime.strptime(raw, fmt)
+    except ValueError:
+        return False
+    return True
+
+
+def _parse_row(row: list[str], column_index: dict[str, int], date_format: str) -> ParsedTransaction:
+    posted_date = _parse_date(_cell(row, column_index, "date"), date_format)
     raw_description = _cell(row, column_index, "description").strip()
-    withdrawal_cents = _parse_decimal_cents(_cell(row, column_index, "withdrawal"), "withdrawal")
-    deposit_cents = _parse_decimal_cents(_cell(row, column_index, "deposit"), "deposit")
-    balance_cents = _parse_decimal_cents(_cell(row, column_index, "balance"), "balance")
+    withdrawal_cents = _parse_cents(_cell(row, column_index, "withdrawal"), "withdrawal")
+    deposit_cents = _parse_cents(_cell(row, column_index, "deposit"), "deposit")
+    balance_cents = _parse_cents(_cell(row, column_index, "balance"), "balance")
 
     if not raw_description:
         raise ValueError("description is required.")
 
+    if (withdrawal_cents or 0) < 0 or (deposit_cents or 0) < 0:
+        raise ValueError("withdrawal and deposit can't be negative. Put money out under withdrawal.")
     if withdrawal_cents and deposit_cents:
         raise ValueError("row cannot have both a withdrawal and a deposit amount.")
     if not withdrawal_cents and not deposit_cents:
@@ -153,57 +201,27 @@ def _cell(row: list[str], column_index: dict[str, int], name: str) -> str:
     return row[index] or ""
 
 
-def _parse_date(raw: str) -> date:
+def _parse_date(raw: str, date_format: str) -> date:
     raw = str(raw).strip()
 
     if not raw:
         raise ValueError("date is required.")
 
-    formats = (
-        # ISO
-        "%Y-%m-%d",
-        "%Y/%m/%d",
-        # Day-first numeric
-        "%d-%m-%Y",
-        "%d/%m/%Y",
-        "%d.%m.%Y",
-        # Day-first textual
-        "%d %b %Y",
-        "%d %B %Y",
-        "%d-%b-%Y",
-        "%d-%B-%Y",
-        # Month-first numeric
-        "%m-%d-%Y",
-        "%m/%d/%Y",
-        # Other common formats
-        "%Y%m%d",
-    )
-
-    for fmt in formats:
-        try:
-            return datetime.strptime(raw, fmt).date()
-        except ValueError:
-            continue
-
-    raise ValueError(
-        f"invalid date '{raw}'. "
-        f"Supported formats include YYYY-MM-DD, DD/MM/YYYY, "
-        f"DD-MM-YYYY, DD Mon YYYY, and MM/DD/YYYY."
-    )
+    try:
+        return datetime.strptime(raw, date_format).date()
+    except ValueError:
+        raise ValueError(f"invalid date '{raw}'. Every date in a file must use the same format.") from None
 
 
-def _parse_decimal_cents(raw: str, field_name: str) -> int | None:
+def _parse_cents(raw: str, field_name: str) -> int | None:
     raw = raw.strip()
 
     if not raw:
         return None
 
     try:
-        value = Decimal(raw)
-    except InvalidOperation:
-        raise ValueError(f"invalid {field_name} '{raw}'.") from None
-
-    if -value.as_tuple().exponent > 2:
-        raise ValueError(f"{field_name} '{raw}' has more than 2 decimal places.")
-
-    return int(value * 100)
+        return Money.parse(raw).cents
+    except ValueError:
+        raise ValueError(
+            f"invalid {field_name} '{raw}'. Use a plain amount with at most 2 decimals."
+        ) from None

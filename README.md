@@ -30,7 +30,7 @@ The usual accounting reports are there too: balance sheets, cashflows, and other
 
 How a transaction gets booked against a category account. The order is the priority in which they are applied:
 
-1. **Transfer match**: paired with a counterpart transaction in another account, so the two book against each other
+1. **Transfer match**: paired with a counterpart transaction in another account, so the two book against each other. A transfer wins over splits and overrides, and the Rules page marks the ones it ignores.
 2. **Manual split**: the user splits the transaction across several categories
 3. **Manual override**: the user pinned that transaction to a category
 4. **Matching rule**: the category from the first user-configured rule
@@ -71,6 +71,17 @@ and the `wsgi.py` entrypoint:
 uv run gunicorn -b 127.0.0.1:8000 wsgi:app
 ```
 
+If the proxy sets `X-Forwarded-For` and `X-Forwarded-Proto`, set `TRUSTED_PROXIES` in `.env` to the number of proxies in front of the app, usually 1. Leave it at 0 otherwise, because any client can send those headers.
+
+### Upgrading
+
+A release can change the database schema, and the app refuses to start on an older one. After pulling a new release:
+
+1. Run `uv run intent-ledger migrate --dry-run`. It upgrades a copy in memory and prints what would change: the schema version, row counts, and every transaction that would move to another category. Nothing is written.
+2. Stop the app.
+3. Run `uv run intent-ledger migrate`. It backs the database up to `DATA_DIR/backups/`, then upgrades it in one transaction. If any step fails, the database stays exactly as it was.
+4. Start the app.
+
 <br>
 
 ## Importing statements
@@ -106,14 +117,15 @@ Options:
 Commands:
   export-all      Export account statements, project reports, and yearly...
   import          Import every pending uploaded statement and rebuild the...
-  rebuild-ledger  Recompute the ledger and subscription matches from...
+  migrate         Upgrade the database to this release's schema.
+  rebuild-ledger  Recompute the ledger from transactions, rules, and...
   routes          Show the routes for the app.
   run             Run a development server.
   shell           Run a shell in the app context.
 ```
 
 This can be done from the UI as well but is included for convenience:
-`export-all` writes the following into `DATA_DIR/finance/exports/`:
+`export-all` writes the following into `DATA_DIR/exports/`:
 - a statement per account,
 - a report per project,
 - a yearly report for every year with transaction data.
@@ -142,6 +154,17 @@ Front-end dependencies are committed files:
 | IBM Plex Mono | Numbers and code |
 
 Edit `static/css/input.css` to change styles. `app.css` is generated via Tailwind CSS [Standalone CLI](https://tailwindcss.com/blog/standalone-cli). These files are updated in every release.
+
+<br>
+
+## Troubleshooting
+
+**Pages feel slow.** intent-ledger builds a page in a few milliseconds, so the wait is almost always the network between you and the server. Check these in order:
+
+- Over Tailscale, run `tailscale ping <server>`. `via DERP(...)` means traffic goes through a relay, which adds 50 to 300 ms to every round trip and caps throughput. `via <ip>:<port>` means a direct connection.
+- If the server is on Wi-Fi, run `iw dev <interface> link`. A signal weaker than -70 dBm, or a low bitrate, limits everything the app sends.
+- Wi-Fi power saving delays requests that arrive while the server is idle. `iw dev <interface> get power_save` shows whether it's on.
+- A cable to the router fixes the last two at once.
 
 <br>
 

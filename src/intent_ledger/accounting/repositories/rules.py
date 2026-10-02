@@ -86,8 +86,8 @@ class AccountRuleRepository:
     def delete(self, rule_id: int) -> None:
         self._conn.execute("DELETE FROM account_rules WHERE id = ?", (rule_id,))
 
-    def delete_learned(self, pattern: str) -> None:
+    def delete_learned(self, pattern: str, priority: int) -> None:
         self._conn.execute(
-            "DELETE FROM account_rules WHERE match_type = 'equals' AND pattern = ? AND priority = 100",
-            (pattern,),
+            "DELETE FROM account_rules WHERE match_type = 'contains' AND pattern = ? AND priority = ?",
+            (pattern, priority),
         )

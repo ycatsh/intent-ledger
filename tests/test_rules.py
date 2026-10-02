@@ -1,17 +1,19 @@
+from werkzeug.datastructures import MultiDict
+
 from intent_ledger.accounting.rules import add_account_rule, get_rule, update_account_rule
 
 
-class FakeForm(dict):
-    def get(self, key, default=None, type=None):
-        if key not in self:
-            return default
-        value = super().get(key)
-        if type is None:
-            return value
-        try:
-            return type(value)
-        except (TypeError, ValueError):
-            return default
+class FakeForm(MultiDict):
+    def __init__(self, values=None, **fields):
+        fields = {**(values or {}), **fields}
+        super().__init__(
+            [
+                (key, str(item))
+                for key, value in fields.items()
+                for item in (value if isinstance(value, list) else [value])
+                if item is not None
+            ]
+        )
 
 
 def test_add_account_rule_without_a_payee(conn, account_factory):

@@ -2,8 +2,9 @@ from collections import defaultdict
 from datetime import date
 from difflib import SequenceMatcher
 
+from intent_ledger import forms
 from intent_ledger.accounting.repositories.rules_transfers import TransferRuleRepository
-from intent_ledger.accounting.rules import find_matching_rule, validate_pattern
+from intent_ledger.accounting.rules import MATCHERS, find_matching_rule, validate_pattern
 from intent_ledger.db import db
 from intent_ledger.domain.money import Money
 
@@ -12,6 +13,12 @@ DESCRIPTION_WEIGHT = 30.0
 ABSTAIN_COST = 20.0
 MAX_DATE_DIFF_DAYS = 7
 DISQUALIFIED_COST = 1_000_000.0
+
+
+def match_transfer_pairs(conn, transactions):
+    rules = fetch_transfer_rules(conn)
+    candidates = [t for t in transactions if is_transfer_candidate(rules, t["raw_description"])]
+    return match_transfers(candidates)
 
 
 def fetch_transfer_rules(conn):
@@ -140,27 +147,28 @@ def get_transfer_rule(rule_id):
 
 
 def add_transfer_rule(form):
-    pattern = form.get("pattern", "").strip()
-    if not pattern:
-        raise ValueError("Pattern is required.")
-
-    match_type = form.get("match_type", "contains")
-    validate_pattern(match_type, pattern)
+    match_type, pattern = _parse_transfer_rule_form(form)
 
     with db.transaction() as conn:
         return TransferRuleRepository(conn).create(match_type, pattern)
 
 
 def update_transfer_rule(rule_id, form):
-    pattern = form.get("pattern", "").strip()
-    if not pattern:
-        raise ValueError("Pattern is required.")
-
-    match_type = form.get("match_type", "contains")
-    validate_pattern(match_type, pattern)
+    match_type, pattern = _parse_transfer_rule_form(form)
 
     with db.transaction() as conn:
         TransferRuleRepository(conn).update(rule_id, match_type, pattern)
+
+
+def _parse_transfer_rule_form(form):
+    pattern = forms.text(form, "pattern")
+    if not pattern:
+        raise ValueError("Pattern is required.")
+
+    match_type = forms.choice(form, "match_type", MATCHERS, "match type")
+    validate_pattern(match_type, pattern)
+
+    return match_type, pattern
 
 
 def delete_transfer_rule(rule_id):

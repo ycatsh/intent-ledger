@@ -132,7 +132,8 @@
         expense. A candidate that doesn't find a pair is categorized like any other transaction.</li>
       <li><span class="text-text">Overrides</span> set the category for one specific transaction by hand,
         from the Accounts view. An override always wins over a rule or payee default, and a split always
-        wins over an override.</li>
+        wins over an override. A matched transfer wins over both, and the Overrides tab marks the ones it
+        ignores.</li>
       <li><span class="text-text">Splits</span> divide one transaction across as many categories as you
         need. The editor tracks how much is still unassigned, and the split only saves once the lines add
         up to the full amount.</li>
@@ -332,6 +333,9 @@
           <span class="text-text-secondary line-through">{{ override.default_account_name }}</span>
           {% endif %}
           <span class="font-medium">{{ override.account_name }}</span>
+          {% if override.ignored_by_transfer %}
+          <span class="badge border-warning bg-warning-dim text-warning">Ignored by transfer</span>
+          {% endif %}
         </span>
         <span class="mt-1 flex items-center gap-1 text-xs text-text-secondary">
           {{ icon("calendar", "h-3.5 w-3.5") }} {{ override.posted_date }}
@@ -356,6 +360,13 @@
           <div class="text-xs text-text-secondary">{{ context.posted_date }}</div>
           <div class="mono text-lg {{ 'amount-negative' if context.amount < 0 else 'amount-positive' }}">{{ context.amount|money }}</div>
         </div>
+
+        {% if context.ignored_by_transfer %}
+        <p class="mb-4 text-xs text-warning">
+          A transfer rule pairs this transaction with one in another account, so the transfer decides where it
+          goes. Overrides and splits on it have no effect until the transfer rule stops matching it.
+        </p>
+        {% endif %}
 
         <form id="override-delete-form" method="post" class="hidden" data-confirm="Remove this override?"
               action="{{ url_for('rules.overrides_delete', transaction_hash=context.transaction_hash) }}">

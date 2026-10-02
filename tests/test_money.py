@@ -1,3 +1,5 @@
+import pytest
+
 from intent_ledger.domain.money import MIRRORED_TYPES, Money
 
 
@@ -6,9 +8,17 @@ def test_amount_converts_cents_to_dollars():
     assert Money(-500).amount == -5.0
 
 
-def test_from_dollars_rounds_to_the_nearest_cent():
-    assert Money.from_dollars(19.999) == Money(2000)
-    assert Money.from_dollars(None) == Money(0)
+def test_parse_reads_text_straight_into_cents():
+    assert Money.parse("1234.5") == Money(123450)
+    assert Money.parse(" 0.07 ") == Money(7)
+    assert Money.parse("-20") == Money(-2000)
+    assert Money.parse(".5") == Money(50)
+
+
+@pytest.mark.parametrize("text", ["", "-", "1,000", "1.005", "nan", "inf", "1e3", "+5", "12.3.4", "abc"])
+def test_parse_rejects_anything_but_a_plain_amount(text):
+    with pytest.raises(ValueError):
+        Money.parse(text)
 
 
 def test_signed_for_display_flips_expense_and_income_only():

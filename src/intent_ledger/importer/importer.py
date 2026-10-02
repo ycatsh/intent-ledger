@@ -1,5 +1,6 @@
 import re
 import sqlite3
+from collections import Counter
 from pathlib import Path
 
 from intent_ledger.db import db
@@ -22,6 +23,12 @@ def import_directory(directory: str | Path, account_id: int, parser_slug: str = 
 
 
 def import_statement(statement_path: str | Path, account_id: int, parser_slug: str = "canonical"):
+    """Insert a statement's rows, skipping the ones already stored.
+
+    Identical rows are real: two coffees on the same day are two payments. So
+    a row counts as already stored only when the account holds at least as
+    many copies of it as the file has seen so far.
+    """
     statement_path = Path(statement_path)
     parser = PARSERS[parser_slug]
 
@@ -32,8 +39,15 @@ def import_statement(statement_path: str | Path, account_id: int, parser_slug: s
     with db.transaction() as conn:
         _ensure_account_active(conn, account_id)
 
+        stored = _stored_counts(conn, account_id)
+        seen = Counter()
+
         for txn in transactions:
-            result = _process_transaction(conn=conn, account_id=account_id, txn=txn)
+            key = _dedup_key(
+                txn["posted_date"], txn["amount_cents"], txn["balance_cents"], txn["raw_description"]
+            )
+            seen[key] += 1
+            result = _process_transaction(conn, account_id, txn, occurrence=seen[key], stored=stored[key])
             results.append(result)
 
     inserted = sum(1 for r in results if r["status"] == "inserted")
@@ -61,13 +75,36 @@ def _ensure_account_active(conn, account_id: int) -> None:
         raise ValueError(f"Account {account_id} not found or inactive.")
 
 
-def _process_transaction(conn, account_id: int, txn: dict):
+def _stored_counts(conn, account_id: int) -> Counter:
+    rows = conn.execute(
+        """
+        SELECT posted_date, amount_cents, balance_cents, raw_description
+        FROM transactions
+        WHERE account_id = ? AND status = 'bank'
+        """,
+        (account_id,),
+    )
+
+    return Counter(
+        _dedup_key(row["posted_date"], row["amount_cents"], row["balance_cents"], row["raw_description"])
+        for row in rows
+    )
+
+
+def _dedup_key(posted_date, amount_cents: int, balance_cents: int | None, raw_description: str) -> tuple:
+    return str(posted_date), amount_cents, balance_cents, _content(raw_description)
+
+
+def _process_transaction(conn, account_id: int, txn: dict, occurrence: int, stored: int):
     normalized = normalize_description(txn["raw_description"])
 
-    transaction_hash = _resolve_transaction_hash(conn, account_id, txn, normalized)
+    transaction_hash = _resolve_transaction_hash(conn, account_id, txn, normalized, occurrence)
     payee_id = _resolve_payee(conn, normalized["payee"])
 
-    inserted = _insert_transaction(
+    if occurrence <= stored:
+        return {"status": "duplicate", "transaction_hash": transaction_hash, "payee_id": payee_id}
+
+    _insert_transaction(
         conn,
         {
             "account_id": account_id,
@@ -82,14 +119,10 @@ def _process_transaction(conn, account_id: int, txn: dict):
         },
     )
 
-    return {
-        "status": "inserted" if inserted else "duplicate",
-        "transaction_hash": transaction_hash,
-        "payee_id": payee_id,
-    }
+    return {"status": "inserted", "transaction_hash": transaction_hash, "payee_id": payee_id}
 
 
-def _resolve_transaction_hash(conn, account_id: int, txn: dict, normalized: dict) -> str:
+def _resolve_transaction_hash(conn, account_id: int, txn: dict, normalized: dict, occurrence: int) -> str:
     primary_hash = fingerprint(
         account_id=account_id,
         posted_date=str(txn["posted_date"]),
@@ -103,23 +136,22 @@ def _resolve_transaction_hash(conn, account_id: int, txn: dict, normalized: dict
         (primary_hash,),
     ).fetchone()
 
-    if existing is None or _same_content(existing["raw_description"], txn["raw_description"]):
-        return primary_hash
+    if existing is None or _content(existing["raw_description"]) == _content(txn["raw_description"]):
+        first_copy_hash = primary_hash
+    else:
+        first_copy_hash = fingerprint(
+            account_id=account_id,
+            posted_date=str(txn["posted_date"]),
+            amount_cents=txn["amount_cents"],
+            balance_cents=txn["balance_cents"],
+            description=normalized["structured"],
+        )
 
-    return fingerprint(
-        account_id=account_id,
-        posted_date=str(txn["posted_date"]),
-        amount_cents=txn["amount_cents"],
-        balance_cents=txn["balance_cents"],
-        description=normalized["structured"],
-    )
+    return first_copy_hash if occurrence == 1 else f"{first_copy_hash}#{occurrence}"
 
 
-def _same_content(a: str, b: str) -> bool:
-    def strip_ws(s: str) -> str:
-        return re.sub(r"\s+", "", s).upper()
-
-    return strip_ws(a) == strip_ws(b)
+def _content(description: str) -> str:
+    return re.sub(r"\s+", "", description).upper()
 
 
 def _resolve_payee(conn, normalized_description: str):
@@ -139,7 +171,7 @@ def _resolve_payee(conn, normalized_description: str):
     return row["payee_id"]
 
 
-def _insert_transaction(conn, txn: dict) -> bool:
+def _insert_transaction(conn, txn: dict) -> None:
     try:
         conn.execute(
             """
@@ -168,10 +200,7 @@ def _insert_transaction(conn, txn: dict) -> bool:
             """,
             txn,
         )
-
-        return True
-    except sqlite3.IntegrityError as exc:
-        if "transaction_hash" not in str(exc):
-            raise
-
-        return False
+    except sqlite3.IntegrityError as e:
+        raise ValueError(
+            f"{txn['posted_date']} {txn['raw_description']!r} clashes with a stored row: {e}"
+        ) from e

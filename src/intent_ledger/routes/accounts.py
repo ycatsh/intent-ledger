@@ -1,5 +1,6 @@
-from flask import Blueprint, abort, flash, redirect, render_template, request, send_file, url_for
+from flask import Blueprint, abort, flash, redirect, render_template, request, url_for
 
+from intent_ledger import forms
 from intent_ledger.accounting.accounts import (
     create_account,
     get_account_view_page,
@@ -22,7 +23,8 @@ from intent_ledger.accounting.projects import (
     unassign_transactions_from_project,
 )
 from intent_ledger.analytics.workbook import export_account_statement
-from intent_ledger.service import rebuild_ledger_and_subscriptions
+from intent_ledger.routes.downloads import send_export
+from intent_ledger.service import ledger_change
 from intent_ledger.settings import today
 
 accounts_bp = Blueprint("accounts", __name__)
@@ -103,11 +105,11 @@ def accounts_export():
     search = request.args.get("search", "")
 
     try:
-        path = export_account_statement(account_id, search=search)
+        export = export_account_statement(account_id, search=search)
     except ValueError:
         abort(404)
 
-    return send_file(path, as_attachment=True, download_name=path.name)
+    return send_export(export)
 
 
 @accounts_bp.post("/accounts/assign-project")
@@ -163,16 +165,16 @@ def accounts_new():
 @accounts_bp.post("/transactions/new")
 def transactions_new():
     def action():
-        add_manual_transaction(
-            {
-                "from_account_id": request.form.get("from_account_id", type=int),
-                "category_account_id": request.form.get("category_account_id", type=int),
-                "payee_name": request.form.get("payee_name", ""),
-                "posted_date": request.form.get("posted_date"),
-                "amount": request.form.get("amount", type=float),
-            }
-        )
-        rebuild_ledger_and_subscriptions()
+        fields = {
+            "from_account_id": forms.integer(request.form, "from_account_id", "account"),
+            "category_account_id": forms.integer(request.form, "category_account_id", "category"),
+            "payee_name": forms.text(request.form, "payee_name"),
+            "posted_date": forms.iso_date(request.form, "posted_date", "Date"),
+            "amount_cents": forms.money(request.form, "amount", "Amount").cents,
+        }
+
+        with ledger_change():
+            add_manual_transaction(fields)
 
     return _perform(action, "Transaction added.")
 
@@ -180,7 +182,7 @@ def transactions_new():
 @accounts_bp.post("/transactions/<transaction_hash>/delete")
 def transactions_delete(transaction_hash):
     def action():
-        delete_manual_transaction(transaction_hash)
-        rebuild_ledger_and_subscriptions()
+        with ledger_change():
+            delete_manual_transaction(transaction_hash)
 
     return _perform(action, "Transaction deleted.")

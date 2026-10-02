@@ -25,10 +25,10 @@ def test_assign_without_payee_learns_an_account_rule_flagged_for_review(
     _assign(conn, transaction_id, "", "Test Home Loan")
 
     rules = conn.execute(
-        "SELECT match_type, pattern, priority, needs_review FROM account_rules WHERE priority = 100"
+        "SELECT match_type, pattern, priority, needs_review FROM account_rules WHERE priority = 50"
     ).fetchall()
     assert len(rules) == 1
-    assert rules[0]["match_type"] == "equals"
+    assert rules[0]["match_type"] == "contains"
     assert rules[0]["pattern"] == "FIRST NATIONAL HOME"
     assert rules[0]["needs_review"] == 1
 
@@ -61,7 +61,7 @@ def test_reassigning_the_same_description_replaces_the_learned_rule_not_duplicat
 
     rules = conn.execute(
         "SELECT account_id FROM account_rules "
-        "WHERE match_type = 'equals' AND pattern = 'FIRST NATIONAL HOME' AND priority = 100"
+        "WHERE match_type = 'contains' AND pattern = 'FIRST NATIONAL HOME' AND priority = 50"
     ).fetchall()
     assert len(rules) == 1
     assert rules[0]["account_id"] == other_id
@@ -186,3 +186,27 @@ def test_all_account_names_covers_inactive_accounts_too(account_factory):
 
     assert "Test Retired Card" in get_all_account_names()
     assert "Test Retired Card" not in [a.name for a in get_all_accounts()]
+
+
+def test_a_learned_rule_that_cannot_match_its_own_row_pins_the_row_with_an_override(
+    conn, account_factory, transaction_factory
+):
+    checking_id = account_factory("Test Checking")
+    account_factory("Test Groceries", type="expense")
+    transaction_hash = transaction_factory(checking_id, "2026-01-15", -2000, "CORNER SHOP 0042")
+    conn.execute(
+        "UPDATE transactions SET normalized_description = 'OLD KEY' WHERE transaction_hash = ?",
+        (transaction_hash,),
+    )
+    transaction_id = conn.execute(
+        "SELECT id FROM transactions WHERE transaction_hash = ?", (transaction_hash,)
+    ).fetchone()["id"]
+
+    _assign(conn, transaction_id, "", "Test Groceries")
+
+    override = conn.execute(
+        "SELECT a.name FROM transactions_overrides o JOIN accounts a ON a.id = o.account_id "
+        "WHERE o.transaction_hash = ?",
+        (transaction_hash,),
+    ).fetchone()
+    assert override["name"] == "Test Groceries"

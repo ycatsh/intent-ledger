@@ -24,6 +24,8 @@ ALLOWED_FIELDS = {
     "counterparties": {"name"},
 }
 
+NORMALIZED_FIELDS = ("canonical_name", "alias")
+
 
 def assert_allowed_fields_match_schema(conn) -> None:
     for table, fields in ALLOWED_FIELDS.items():
@@ -167,19 +169,30 @@ def _account_rows(conn, types, order_by):
 
 
 def save_mappings(changes):
+    if not isinstance(changes, list) or not all(isinstance(change, dict) for change in changes):
+        raise ValueError("changes must be a list of objects")
+
     for change in changes:
         op, table = change.get("op"), change.get("table")
 
-        if table not in ALLOWED_FIELDS:
+        if not isinstance(table, str) or table not in ALLOWED_FIELDS:
             raise ValueError(f"unknown table {table!r}")
         if op not in ("insert", "update", "delete"):
             raise ValueError(f"unknown op {op!r}")
-        if op == "insert" and not isinstance(change.get("temp_id"), str):
-            raise ValueError("insert requires a temp_id")
+        if op == "insert" and (not isinstance(change.get("temp_id"), str) or not change.get("fields")):
+            raise ValueError("insert requires a temp_id and fields")
         if op in ("update", "delete") and not isinstance(change.get("id"), int):
             raise ValueError(f"{op} requires an id")
 
-        bad_fields = set(change.get("fields", {})) - ALLOWED_FIELDS[table]
+        fields = change.get("fields", {})
+        if not isinstance(fields, dict) or not all(
+            isinstance(v, str | int | float | None) for v in fields.values()
+        ):
+            raise ValueError(f"fields for {table} must map column names to plain values")
+        if any(not isinstance(fields.get(name, ""), str) for name in NORMALIZED_FIELDS):
+            raise ValueError(f"{', '.join(NORMALIZED_FIELDS)} must be text")
+
+        bad_fields = set(fields) - ALLOWED_FIELDS[table]
         if bad_fields:
             raise ValueError(f"unknown fields {sorted(bad_fields)} for {table}")
 
@@ -203,6 +216,9 @@ def _apply_change(conn, change, id_map):
         fields["normalized_name"] = normalize(fields["canonical_name"])
     elif table == "payee_aliases" and "alias" in fields:
         fields["normalized_alias"] = extract_payee_key(fields["alias"])
+
+    if table == "accounts" and op in ("update", "delete"):
+        _protect_built_in_account(conn, change["id"], op, fields)
 
     if table == "accounts" and op == "update" and fields:
         fields["needs_review"] = 0
@@ -234,6 +250,20 @@ def _apply_change(conn, change, id_map):
 
     except sqlite3.IntegrityError as e:
         raise ValueError(str(e)) from e
+
+
+def _protect_built_in_account(conn, account_id: int, op: str, fields: dict) -> None:
+    account = conn.execute(
+        "SELECT name, type, is_system FROM accounts WHERE id = ?", (account_id,)
+    ).fetchone()
+    if account is None or not account["is_system"]:
+        return
+
+    renamed = "name" in fields and fields["name"] != account["name"]
+    retyped = "type" in fields and fields["type"] != account["type"]
+
+    if op == "delete" or renamed or retyped:
+        raise ValueError(f"{account['name']} is built in, so it can't be renamed, retyped, or deleted.")
 
 
 def _validate_account_hierarchy(conn, account_id, fields):

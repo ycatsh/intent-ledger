@@ -1,63 +1,93 @@
+from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 
 from intent_ledger.accounting.accounts import get_all_accounts
 from intent_ledger.accounting.ledger import rebuild_ledger
 from intent_ledger.accounting.projects import get_all_projects
-from intent_ledger.accounting.subscriptions import rebuild_subscription_matches
 from intent_ledger.analytics.workbook import (
     export_account_statement,
     export_project_report,
     export_yearly_report,
 )
-from intent_ledger.db import db
+from intent_ledger.config import DATA_DIR
+from intent_ledger.db import db, savepoint
 from intent_ledger.importer.importer import import_statement
 from intent_ledger.importer.uploads import INGEST_DIR, list_pending_statements
+
+EXPORT_DIR = DATA_DIR / "exports"
 
 
 def initialize_database():
     db.initialize()
 
 
+@dataclass
+class LedgerChange:
+    recategorized: int = 0
+
+
+@contextmanager
+def ledger_change():
+    """Apply a change and rebuild the ledger from it in one transaction.
+
+    If the change or the rebuild fails, both roll back, so the ledger can't
+    fall out of step with the data it is built from.
+
+    Yields:
+        A LedgerChange whose `recategorized` count is set once the block ends.
+    """
+    change = LedgerChange()
+
+    with db.transaction():
+        yield change
+        change.recategorized = rebuild_ledger()
+
+
 def import_pending_statements() -> list[dict]:
     summaries = []
 
-    for entry in list_pending_statements():
-        if entry["account_id"] is None or entry["parser_slug"] is None:
-            continue
+    with db.transaction() as conn:
+        for entry in list_pending_statements():
+            if entry["account_id"] is None or entry["parser_slug"] is None:
+                continue
 
-        summary = import_statement(
-            INGEST_DIR / entry["name"],
-            account_id=entry["account_id"],
-            parser_slug=entry["parser_slug"],
-        )
-        summaries.append(summary)
+            path = INGEST_DIR / entry["name"]
+
+            try:
+                with savepoint(conn):
+                    summary = import_statement(
+                        path, account_id=entry["account_id"], parser_slug=entry["parser_slug"]
+                    )
+            except ValueError as e:
+                summary = {"statement": str(path), "error": str(e), "inserted": 0, "row_errors": []}
+
+            summaries.append(summary)
 
     return summaries
 
 
-def rebuild_ledger_and_subscriptions() -> int:
-    """Rebuild the ledger and subscription matches. Returns how many
-    transactions ended up in a different account than before, so a caller
-    can report the actual impact of whatever change triggered the rebuild.
-    """
-    changed = rebuild_ledger()
-    rebuild_subscription_matches()
-    return changed
-
-
 def export_all(accounts: bool = True, projects: bool = True, yearly: bool = True) -> list[Path]:
-    exported = []
+    exports = []
 
     if accounts:
-        exported += [export_account_statement(account.id) for account in get_all_accounts()]
+        exports += [export_account_statement(account.id) for account in get_all_accounts()]
 
     if projects:
-        exported += [export_project_report(project["id"]) for project in get_all_projects()]
+        exports += [export_project_report(project["id"]) for project in get_all_projects()]
 
     if yearly:
-        exported += [export_yearly_report(year) for year in _years_with_transactions()]
+        exports += [export_yearly_report(year) for year in _years_with_transactions()]
 
-    return exported
+    EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+    paths = []
+
+    for filename, content in exports:
+        path = EXPORT_DIR / filename
+        path.write_bytes(content)
+        paths.append(path)
+
+    return paths
 
 
 def _years_with_transactions() -> list[int]:

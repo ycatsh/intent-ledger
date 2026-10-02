@@ -1,20 +1,22 @@
 import click
 from flask import Flask
 from flask_wtf import CSRFProtect
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 from intent_ledger import config
 from intent_ledger.accounting.accounts import get_accounts_needing_review_count
 from intent_ledger.accounting.inbox import get_unknown_txn_count
+from intent_ledger.accounting.ledger import rebuild_ledger
 from intent_ledger.accounting.rules import get_rules_needing_review_count
 from intent_ledger.db import db
 from intent_ledger.routes import register_blueprints
-from intent_ledger.routes.flash import rebuild_impact_message
+from intent_ledger.routes.flash import import_problems, rebuild_impact_message
 from intent_ledger.routes.navigation import current_location, return_target
 from intent_ledger.service import (
     export_all,
     import_pending_statements,
     initialize_database,
-    rebuild_ledger_and_subscriptions,
+    ledger_change,
 )
 
 csrf = CSRFProtect()
@@ -25,6 +27,10 @@ def create_app() -> Flask:
     app.config["SECRET_KEY"] = config.SECRET_KEY
     app.config["SESSION_COOKIE_HTTPONLY"] = True
     app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+
+    if config.TRUSTED_PROXIES:
+        hops = config.TRUSTED_PROXIES
+        app.wsgi_app = ProxyFix(app.wsgi_app, x_for=hops, x_proto=hops)
 
     csrf.init_app(app)
     app.teardown_appcontext(db.close_session)
@@ -43,14 +49,18 @@ def register_cli(app: Flask) -> None:
     @app.cli.command("import")
     def import_command():
         """Import every pending uploaded statement and rebuild the ledger."""
-        summaries = import_pending_statements()
+        with ledger_change():
+            summaries = import_pending_statements()
+
         inserted = sum(s["inserted"] for s in summaries)
         click.echo(f"Imported {inserted} transaction(s) across {len(summaries)} file(s).")
+        for problem in import_problems(summaries):
+            click.echo(problem, err=True)
 
     @app.cli.command("rebuild-ledger")
     def rebuild_ledger_command():
-        """Recompute the ledger and subscription matches from transactions."""
-        changed = rebuild_ledger_and_subscriptions()
+        """Recompute the ledger from transactions, rules, and overrides."""
+        changed = rebuild_ledger()
         click.echo(f"Ledger rebuilt.{rebuild_impact_message(changed)}")
 
     @app.cli.command("export-all")

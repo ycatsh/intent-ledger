@@ -1,6 +1,10 @@
+from intent_ledger import forms
+from intent_ledger.accounting.repositories.accounts import AccountRepository
+from intent_ledger.accounting.repositories.payees import PayeeRepository
 from intent_ledger.accounting.repositories.rules_overrides import OverrideRepository
 from intent_ledger.accounting.repositories.rules_splits import SplitLine, SplitRepository
 from intent_ledger.accounting.rules import default_account_id, fetch_account_rules
+from intent_ledger.accounting.rules_transfers import match_transfer_pairs
 from intent_ledger.db import db
 from intent_ledger.domain.money import Money
 
@@ -60,10 +64,12 @@ def get_overrides():
 
         accounts_by_id = {row["id"]: row["name"] for row in conn.execute("SELECT id, name FROM accounts")}
         rules = fetch_account_rules(conn)
+        transfer_hashes = _transfer_leg_hashes(conn)
 
         for row in rows:
             row["default_account_name"] = None
             row["from_account_name"] = accounts_by_id.get(row["from_account_id"])
+            row["ignored_by_transfer"] = row["transaction_hash"] in transfer_hashes
 
             if row["has_split"]:
                 continue
@@ -74,6 +80,12 @@ def get_overrides():
                 row["default_account_name"] = accounts_by_id.get(default_id)
 
         return rows
+
+
+def _transfer_leg_hashes(conn) -> set[str]:
+    transactions = conn.execute("SELECT * FROM transactions").fetchall()
+    pairs = match_transfer_pairs(conn, transactions)
+    return {t["transaction_hash"] for t in transactions if t["id"] in pairs}
 
 
 def get_override_context(transaction_hash):
@@ -115,6 +127,8 @@ def get_override_context(transaction_hash):
             default_row = conn.execute("SELECT name FROM accounts WHERE id = ?", (default_id,)).fetchone()
             default_account_name = default_row["name"] if default_row else None
 
+        ignored_by_transfer = transaction_hash in _transfer_leg_hashes(conn)
+
     return {
         "id": row["override_id"],
         "transaction_hash": row["transaction_hash"],
@@ -132,20 +146,24 @@ def get_override_context(transaction_hash):
             for s in splits
         ],
         "has_split": len(splits) > 0,
+        "ignored_by_transfer": ignored_by_transfer,
     }
 
 
 def add_override(form):
-    transaction_hash = form.get("transaction_hash", "").strip()
-    account_id = form.get("account_id", type=int)
-    payee_id = form.get("payee_id", type=int)
-
+    transaction_hash = forms.text(form, "transaction_hash")
     if not transaction_hash:
         raise ValueError("Select a transaction to override.")
-    if not account_id:
-        raise ValueError("Account is required.")
+
+    account_id = forms.integer(form, "account_id", "account")
+    payee_id = forms.optional_integer(form, "payee_id", "payee")
 
     with db.transaction() as conn:
+        _require_transaction(conn, transaction_hash)
+        _require_account(conn, account_id)
+        if payee_id is not None and PayeeRepository(conn).get(payee_id) is None:
+            raise ValueError("Payee not found.")
+
         SplitRepository(conn).delete(transaction_hash)
         OverrideRepository(conn).set(transaction_hash, account_id)
         conn.execute(
@@ -161,7 +179,7 @@ def delete_override(transaction_hash):
 
 
 def save_split(form):
-    transaction_hash = form.get("transaction_hash", "").strip()
+    transaction_hash = forms.text(form, "transaction_hash")
     if not transaction_hash:
         raise ValueError("Select a transaction to split.")
 
@@ -171,13 +189,9 @@ def save_split(form):
         raise ValueError("A split needs at least two lines.")
 
     with db.transaction() as conn:
-        txn = conn.execute(
-            "SELECT amount_cents FROM transactions WHERE transaction_hash = ?",
-            (transaction_hash,),
-        ).fetchone()
-
-        if txn is None:
-            raise ValueError("Transaction not found.")
+        txn = _require_transaction(conn, transaction_hash)
+        for account_id, _, _ in lines:
+            _require_account(conn, account_id)
 
         target_total = -txn["amount_cents"]
         total = sum(amount_cents for _, amount_cents, _ in lines)
@@ -190,6 +204,23 @@ def save_split(form):
 
         OverrideRepository(conn).delete(transaction_hash)
         SplitRepository(conn).replace(transaction_hash, lines)
+
+
+def _require_transaction(conn, transaction_hash: str):
+    txn = conn.execute(
+        "SELECT amount_cents FROM transactions WHERE transaction_hash = ?",
+        (transaction_hash,),
+    ).fetchone()
+
+    if txn is None:
+        raise ValueError("Transaction not found.")
+
+    return txn
+
+
+def _require_account(conn, account_id: int) -> None:
+    if AccountRepository(conn).get(account_id) is None:
+        raise ValueError("Account not found.")
 
 
 def parse_split_lines(form) -> list[SplitLine]:
@@ -211,10 +242,10 @@ def parse_split_lines(form) -> list[SplitLine]:
             raise ValueError("Every split line needs a category.")
 
         try:
-            amount = float(raw_amount)
+            amount = Money.parse(raw_amount)
         except ValueError:
-            raise ValueError("Every split line needs an amount.") from None
+            raise ValueError("Every split line needs an amount like 1234.50.") from None
 
-        lines.append((int(raw_account), Money.from_dollars(amount).cents, note or None))
+        lines.append((forms.whole_number(raw_account, "split category"), amount.cents, note or None))
 
     return lines

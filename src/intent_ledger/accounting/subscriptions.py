@@ -2,6 +2,8 @@ import calendar
 from collections import defaultdict
 from datetime import date, timedelta
 
+from intent_ledger import forms
+from intent_ledger.accounting.repositories.payees import PayeeRepository
 from intent_ledger.accounting.repositories.subscriptions import SubscriptionRepository
 from intent_ledger.analytics.reports import get_recurring_payments
 from intent_ledger.db import db
@@ -210,35 +212,28 @@ def _monthly_equivalent(amount, cadence):
 
 def create_subscription(form) -> int:
     fields = _parse_form(form)
-    fields["first_seen_date"] = _derive_first_seen_date(fields["payee_id"], fields["amount_cents"])
 
     with db.transaction() as conn:
+        fields["first_seen_date"] = _derive_first_seen_date(fields["payee_id"], fields["amount_cents"])
         fields["account_id"] = _subscription_account_id(conn)
-        subscription_id = SubscriptionRepository(conn).create(fields)
-
-    rebuild_subscription_matches()
-    return subscription_id
+        return SubscriptionRepository(conn).create(fields)
 
 
 def _parse_form(form):
-    payee_id = form.get("payee_id", type=int)
-    if not payee_id:
-        raise ValueError("Payee is required.")
+    payee_id = forms.integer(form, "payee_id", "payee")
+    cadence = forms.choice(form, "cadence", CADENCES, "cadence")
+    amount = forms.positive_money(form, "amount", "Amount")
 
-    cadence = form.get("cadence", "").strip()
-    if cadence not in CADENCES:
-        raise ValueError("Choose a valid cadence.")
-
-    amount = form.get("amount", type=float)
-    if not amount or amount <= 0:
-        raise ValueError("Amount must be a positive number.")
+    with db.transaction() as conn:
+        if PayeeRepository(conn).get(payee_id) is None:
+            raise ValueError("Payee not found.")
 
     return {
         "payee_id": payee_id,
-        "name": form.get("name", "").strip() or None,
-        "amount_cents": -round(amount * 100),
+        "name": forms.text(form, "name") or None,
+        "amount_cents": -amount.cents,
         "cadence": cadence,
-        "notes": form.get("notes", "").strip() or None,
+        "notes": forms.text(form, "notes") or None,
     }
 
 
@@ -271,21 +266,15 @@ def update_subscription(subscription_id: int, form):
         fields["account_id"] = _subscription_account_id(conn)
         repo.update(fields)
 
-    rebuild_subscription_matches()
-
 
 def cancel_subscription(subscription_id: int):
     with db.transaction() as conn:
         SubscriptionRepository(conn).cancel(subscription_id)
 
-    rebuild_subscription_matches()
-
 
 def reactivate_subscription(subscription_id: int):
     with db.transaction() as conn:
         SubscriptionRepository(conn).reactivate(subscription_id)
-
-    rebuild_subscription_matches()
 
 
 def delete_subscription(subscription_id: int):
@@ -296,40 +285,3 @@ def delete_subscription(subscription_id: int):
             raise ValueError("Cancel this subscription instead, it already has matched charges.")
 
         repo.delete(subscription_id)
-
-
-def rebuild_subscription_matches():
-    with db.transaction() as conn:
-        conn.execute("DELETE FROM subscriptions_charges")
-
-        subs = conn.execute("SELECT * FROM subscriptions").fetchall()
-        for sub in subs:
-            rows = conn.execute(
-                """
-                SELECT t.id AS transaction_id, t.posted_date, l.amount_cents
-                FROM ledger l
-                JOIN transactions t ON t.id = l.transaction_id
-                JOIN accounts a ON a.id = l.account_id
-                WHERE a.type = 'expense'
-                  AND l.amount_cents = ?
-                  AND t.payee_id = ?
-                  AND (? IS NULL OR t.posted_date <= ?)
-            """,
-                (
-                    -sub["amount_cents"],
-                    sub["payee_id"],
-                    sub["cancelled_at"],
-                    sub["cancelled_at"],
-                ),
-            ).fetchall()
-
-            for r in rows:
-                conn.execute(
-                    """
-                    INSERT OR IGNORE INTO subscriptions_charges (
-                        subscription_id, transaction_id, amount_cents, posted_date
-                    )
-                    VALUES (?, ?, ?, ?)
-                """,
-                    (sub["id"], r["transaction_id"], -r["amount_cents"], r["posted_date"]),
-                )

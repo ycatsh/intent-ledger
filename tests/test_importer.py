@@ -2,6 +2,7 @@ import pytest
 
 from intent_ledger.accounting.inbox import _assign
 from intent_ledger.importer.importer import import_statement
+from intent_ledger.importer.normalize import fingerprint
 
 
 def write_csv(path, text):
@@ -120,3 +121,44 @@ def test_import_against_inactive_account_raises(tmp_path, conn, account_factory)
 
     with pytest.raises(ValueError):
         import_statement(path, account_id=inactive_id)
+
+
+def test_identical_rows_without_a_balance_are_all_imported(tmp_path, conn, checking_account):
+    path = write_csv(
+        tmp_path / "statement.csv",
+        "date,description,withdrawal,deposit\n2026-01-05,COFFEE SHOP,4.50,\n2026-01-05,COFFEE SHOP,4.50,\n",
+    )
+
+    first = import_statement(path, account_id=checking_account)
+    again = import_statement(path, account_id=checking_account)
+
+    assert (first["inserted"], first["duplicates"]) == (2, 0)
+    assert (again["inserted"], again["duplicates"]) == (0, 2)
+
+
+def test_the_first_copy_keeps_its_hash_and_later_copies_are_numbered(tmp_path, conn, checking_account):
+    path = write_csv(
+        tmp_path / "statement.csv",
+        "date,description,withdrawal,deposit\n2026-01-05,COFFEE SHOP,4.50,\n2026-01-05,COFFEE  SHOP,4.50,\n",
+    )
+    first_copy = fingerprint(checking_account, "2026-01-05", -450, None, "")
+
+    summary = import_statement(path, account_id=checking_account)
+
+    assert [r["transaction_hash"] for r in summary["results"]] == [first_copy, f"{first_copy}#2"]
+
+
+def test_reimporting_restores_a_copy_an_older_import_collapsed(tmp_path, conn, checking_account):
+    single = write_csv(
+        tmp_path / "single.csv", "date,description,withdrawal,deposit\n2026-01-05,COFFEE,4.50,\n"
+    )
+    double = write_csv(
+        tmp_path / "double.csv",
+        "date,description,withdrawal,deposit\n2026-01-05,COFFEE,4.50,\n2026-01-05,COFFEE,4.50,\n",
+    )
+
+    import_statement(single, account_id=checking_account)
+    summary = import_statement(double, account_id=checking_account)
+
+    assert (summary["inserted"], summary["duplicates"]) == (1, 1)
+    assert conn.execute("SELECT COUNT(*) AS n FROM transactions").fetchone()["n"] == 2

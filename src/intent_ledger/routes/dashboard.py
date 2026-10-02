@@ -1,6 +1,7 @@
 from flask import Blueprint, flash, redirect, url_for
 
-from intent_ledger.service import import_pending_statements, rebuild_ledger_and_subscriptions
+from intent_ledger.routes.flash import import_problems
+from intent_ledger.service import import_pending_statements, ledger_change
 
 dashboard_bp = Blueprint("dashboard", __name__)
 
@@ -12,9 +13,13 @@ def home():
 
 @dashboard_bp.post("/refresh")
 def refresh():
-    summaries = import_pending_statements()
-    inserted = sum(s["inserted"] for s in summaries)
-    rebuild_ledger_and_subscriptions()
+    with ledger_change():
+        summaries = import_pending_statements()
 
+    inserted = sum(s["inserted"] for s in summaries)
     flash(f"Imported {inserted} transaction(s) and rebuilt the ledger.", "success")
+
+    for problem in import_problems(summaries):
+        flash(problem, "error")
+
     return redirect(url_for("inbox.inbox"))

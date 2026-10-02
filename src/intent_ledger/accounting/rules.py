@@ -1,16 +1,21 @@
 import re
+from functools import cached_property
 
+from intent_ledger import forms
+from intent_ledger.accounting.repositories.accounts import AccountRepository
 from intent_ledger.accounting.repositories.payees import PayeeRepository
 from intent_ledger.accounting.repositories.rules import AccountRuleRepository
 from intent_ledger.db import db
 from intent_ledger.importer.normalize import extract_payee_key
 
+LEARNED_PRIORITY = 50
+
 MATCHERS = {
-    "prefix": lambda text, pattern: text.startswith(pattern),
-    "suffix": lambda text, pattern: text.endswith(pattern),
-    "contains": lambda text, pattern: pattern in text,
-    "equals": lambda text, pattern: text == pattern,
-    "regex": lambda text, pattern: re.search(pattern, text) is not None,
+    "prefix": lambda text, pattern: text.upper.startswith(pattern.upper()),
+    "suffix": lambda text, pattern: text.upper.endswith(pattern.upper()),
+    "contains": lambda text, pattern: pattern.upper() in text.upper or pattern.upper() in text.payee_key,
+    "equals": lambda text, pattern: text.payee_key == pattern.upper(),
+    "regex": lambda text, pattern: re.search(pattern, text.raw, re.IGNORECASE) is not None,
 }
 
 
@@ -30,31 +35,31 @@ def validate_pattern(match_type: str, pattern: str) -> None:
 
 
 def find_matching_rule(rules, raw_description: str):
-    desc = raw_description.upper()
-    fuzzy_desc = None
+    text = _Description(raw_description)
 
     for rule in rules:
         matcher = MATCHERS.get(rule["match_type"])
         if matcher is None:
             continue
 
-        pattern = rule["pattern"].upper()
-
-        if rule["match_type"] == "equals":
-            if fuzzy_desc is None:
-                fuzzy_desc = extract_payee_key(raw_description)
-            text = fuzzy_desc
-        else:
-            text = desc
-
         try:
-            if matcher(text, pattern):
+            if matcher(text, rule["pattern"]):
                 return rule
 
         except re.error:
             continue
 
     return None
+
+
+class _Description:
+    def __init__(self, raw: str):
+        self.raw = raw
+        self.upper = raw.upper()
+
+    @cached_property
+    def payee_key(self) -> str:
+        return extract_payee_key(self.raw)
 
 
 def default_account_id(rules, conn, raw_description: str, payee_id):
@@ -88,10 +93,10 @@ def get_unknown_account_id(conn):
     return row["id"]
 
 
-def learn_account_rule(conn, normalized_description: str, account_id: int) -> None:
+def learn_account_rule(conn, pattern: str, account_id: int) -> None:
     repo = AccountRuleRepository(conn)
-    repo.delete_learned(normalized_description)
-    repo.create("equals", normalized_description, account_id, 100, needs_review=True)
+    repo.delete_learned(pattern, LEARNED_PRIORITY)
+    repo.create("contains", pattern, account_id, LEARNED_PRIORITY, needs_review=True)
 
 
 # Route-facing account rule CRUD:
@@ -138,8 +143,10 @@ def preview_rule_matches(match_type: str, pattern: str, limit: int = 200):
                 t.amount_cents / 100.0 AS amount,
                 a.name AS current_category
             FROM transactions t
+            JOIN ledger own
+                ON own.transaction_id = t.id AND own.account_id = t.account_id
             JOIN ledger l
-                ON l.transaction_id = t.id AND l.account_id != t.account_id
+                ON l.group_id = own.group_id AND l.account_id != t.account_id
             JOIN accounts a
                 ON a.id = l.account_id
             ORDER BY t.posted_date DESC
@@ -161,48 +168,38 @@ def get_rule(rule_id):
 
 
 def update_account_rule(rule_id, form):
-    pattern = form.get("pattern", "").strip()
-    if not pattern:
-        raise ValueError("Pattern is required.")
-
-    match_type = form.get("match_type", "contains")
-    validate_pattern(match_type, pattern)
-
-    account_id = form.get("account_id", type=int)
-    if not account_id:
-        raise ValueError("Account is required.")
-
     with db.transaction() as conn:
-        AccountRuleRepository(conn).update(
-            rule_id,
-            match_type,
-            pattern,
-            account_id,
-            form.get("priority", 0, type=int),
-            form.get("payee_id", type=int),
-        )
+        AccountRuleRepository(conn).update(rule_id, *_parse_rule_form(conn, form))
 
 
 def add_account_rule(form):
-    pattern = form.get("pattern", "").strip()
+    with db.transaction() as conn:
+        return AccountRuleRepository(conn).create(*_parse_rule_form(conn, form))
+
+
+def _parse_rule_form(conn, form):
+    pattern = forms.text(form, "pattern")
     if not pattern:
         raise ValueError("Pattern is required.")
 
-    match_type = form.get("match_type", "contains")
+    match_type = forms.choice(form, "match_type", MATCHERS, "match type")
     validate_pattern(match_type, pattern)
 
-    account_id = form.get("account_id", type=int)
-    if not account_id:
-        raise ValueError("Account is required.")
+    account_id = forms.integer(form, "account_id", "account")
+    payee_id = forms.optional_integer(form, "payee_id", "payee")
 
-    with db.transaction() as conn:
-        return AccountRuleRepository(conn).create(
-            match_type,
-            pattern,
-            account_id,
-            form.get("priority", 0, type=int),
-            form.get("payee_id", type=int),
-        )
+    if AccountRepository(conn).get(account_id) is None:
+        raise ValueError("Account not found.")
+    if payee_id is not None and PayeeRepository(conn).get(payee_id) is None:
+        raise ValueError("Payee not found.")
+
+    return (
+        match_type,
+        pattern,
+        account_id,
+        forms.optional_integer(form, "priority", "priority") or 0,
+        payee_id,
+    )
 
 
 def delete_account_rule(rule_id):

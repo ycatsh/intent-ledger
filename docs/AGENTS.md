@@ -53,9 +53,11 @@ Everything lives under `src/intent_ledger/`.
 - **`analytics/`**: reporting and exports: `reports.py`, `charts.py`, `workbook.py` (XLSX/CSV generation).
 - **`domain/`**: shared value types. `money.py` defines `Money`, an integer-cents type; **never use a `float` for a currency amount**, always go through `Money`. `models.py` holds other small shared types.
 - **`templates/`** + **`static/`**: Jinja templates and committed front-end assets (Tailwind-compiled CSS, vendored JS, fonts). See [Front-end](#front-end) below.
-- **`db.py`**: the `Database` wrapper (`db = Database()` singleton). `db.transaction()` is a context manager yielding a `sqlite3.Connection` with dict-row results; it commits on success and rolls back on exception. Most business-logic functions take a `conn` and are called from inside a `with db.transaction() as conn:` block one level up.
-- **`schema.sql`**: the entire DB schema, applied with `executescript` on `db.initialize()`. Every `CREATE TABLE` uses `IF NOT EXISTS`, so schema.sql only affects *new* databases; there is no migration runner yet. Changing an existing local database's schema is a manual, one-off operation. Keep this in mind before editing `schema.sql` for an already-deployed feature.
-- **`service.py`**: top-level orchestration (`import_pending_statements`, `rebuild_ledger_and_subscriptions`, `export_all`) that `cli.py` and the routes call.
+- **`db.py`**: the `Database` wrapper (`db = Database()` singleton). `db.transaction()` is a context manager yielding a `sqlite3.Connection` with dict-row results; it takes the write lock up front (`BEGIN IMMEDIATE`), commits on success, and rolls back on exception. A nested `db.transaction()` joins the one already open, so the outermost block commits or rolls back everything. Most business-logic functions take a `conn` and are called from inside a `with db.transaction() as conn:` block one level up.
+- **`forms.py`**: strict readers for request values (`integer`, `money`, `iso_date`, `choice`, and friends). They raise `ValueError` with a message the route can flash. Never read a value with `form.get(..., type=float)` or `type=int`, which silently turns bad input into `None`.
+- **`schema.sql`**: the latest schema. `db.initialize()` applies it only to a new, empty database and records `SCHEMA_VERSION` in the file header (`PRAGMA user_version`). On an existing database it only checks that version and refuses to start on a mismatch.
+- **`migrate.py`**: upgrades an existing database, run as `intent-ledger migrate` (`--dry-run` to preview). `STEPS` holds one function per schema version. To change the schema, edit `schema.sql`, append a step that turns the previous version into the new one, and bump `SCHEMA_VERSION` in `db.py`. Never edit a step that has shipped. `tests/test_migrate.py` fails unless a migrated database ends up with exactly the schema a fresh one gets.
+- **`service.py`**: top-level orchestration (`ledger_change`, `import_pending_statements`, `export_all`) that `cli.py` and the routes call. Any change that can move a transaction to another account (rules, overrides, splits, mappings, imports, manual entries) runs inside `with ledger_change() as change:`, which rebuilds the ledger in the same transaction and sets `change.recategorized`.
 - **`cli.py`**: the `intent-ledger` CLI entrypoint (a Click `FlaskGroup`), see `intent-ledger --help` for commands.
 
 <br>
@@ -114,6 +116,7 @@ Edit `static/css/input.css` to change styles; `app.css` is generated via the Tai
 
 - `pyproject.toml`: dependencies, `ruff` config (line length 110, target py312, `docstring-code-format` on), pytest config
 - `src/intent_ledger/schema.sql`: full DB schema, see the note under [Architecture](#architecture--package-structure)
+- `src/intent_ledger/migrate.py`: schema upgrades for existing databases, see the same note
 - `fixtures/`: sample bank statements for manually trying the app (see README "Try it with sample data")
 - `docs/canonical-template.md`: the column spec for the built-in canonical CSV/XLS/XLSX import format
 - `docs/adding-a-parser.md`: how to add a parser for a bank's raw export format
@@ -153,5 +156,5 @@ Edit `static/css/input.css` to change styles; `app.css` is generated via the Tai
 ## Troubleshooting
 
 - **`ruff format --check` fails in CI but you didn't touch that file**: run `uv run ruff format .` locally and diff: a prior change likely left blank-line spacing ruff's formatter wants normalized. This has happened after large reorder-only refactors.
-- **A test can't find a table/column**: check `schema.sql` was actually updated and that you're not relying on a migration: there isn't one. A stale local `accounting.db` from before a schema change needs to be deleted or reinitialized.
+- **A test can't find a table/column**: check `schema.sql` was actually updated, and that `migrate.py` has a step for the change. A local `accounting.db` from before a schema change needs `uv run intent-ledger migrate`; the app refuses to start until then.
 - **Import behaves differently than expected**: confirm which parser is selected for the account (per-account parser mapping, see `docs/adding-a-parser.md`) before assuming the resolution ladder is at fault.

@@ -1,3 +1,7 @@
+CREATE TABLE IF NOT EXISTS schema_version (
+    version INTEGER PRIMARY KEY
+);
+
 CREATE TABLE IF NOT EXISTS app_settings (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     base_currency TEXT NOT NULL DEFAULT 'USD',
@@ -22,9 +26,6 @@ CREATE TABLE IF NOT EXISTS accounts (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (parent_account_id) REFERENCES accounts(id) ON DELETE SET NULL
 );
--- Case-insensitive uniqueness ("Groceries" and "groceries" are the same
--- account) - replaces a plain UNIQUE on name, which only caught exact-case
--- collisions.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_name_ci ON accounts(name COLLATE NOCASE);
 
 CREATE TABLE IF NOT EXISTS payees (
@@ -147,7 +148,7 @@ CREATE TABLE IF NOT EXISTS budgets (
 
 CREATE TABLE IF NOT EXISTS ledger (
     id INTEGER PRIMARY KEY,
-    group_id INTEGER NOT NULL,
+    group_id TEXT NOT NULL,
     transaction_id INTEGER,
     account_id INTEGER NOT NULL,
     amount_cents INTEGER NOT NULL,
@@ -175,6 +176,17 @@ CREATE TABLE IF NOT EXISTS subscriptions (
     FOREIGN KEY (payee_id) REFERENCES payees(id),
     FOREIGN KEY (account_id) REFERENCES accounts(id)
 );
+
+CREATE TABLE IF NOT EXISTS subscriptions_charges (
+    id INTEGER PRIMARY KEY,
+    subscription_id INTEGER NOT NULL,
+    transaction_id INTEGER NOT NULL,
+    amount_cents INTEGER NOT NULL,
+    posted_date DATE NOT NULL,
+    FOREIGN KEY (subscription_id) REFERENCES subscriptions(id),
+    FOREIGN KEY (transaction_id) REFERENCES transactions(id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_subscriptions_charges_txn ON subscriptions_charges(transaction_id);
 
 CREATE VIEW IF NOT EXISTS account_snapshots AS
 SELECT
@@ -221,35 +233,9 @@ JOIN accounts a ON a.id = l.account_id
 WHERE a.type = 'income'
 GROUP BY period;
 
-CREATE VIEW IF NOT EXISTS subscriptions_charges AS
-SELECT DISTINCT
-    s.id AS subscription_id,
-    t.id AS transaction_id,
-    -l.amount_cents AS amount_cents,
-    t.posted_date
-FROM subscriptions s
-JOIN transactions t
-    ON t.payee_id = s.payee_id
-   AND (s.cancelled_at IS NULL OR t.posted_date <= s.cancelled_at)
-JOIN ledger l
-    ON l.transaction_id = t.id
-   AND l.amount_cents = -s.amount_cents
-JOIN accounts a
-    ON a.id = l.account_id
-   AND a.type = 'expense'
-WHERE NOT EXISTS (
-    SELECT 1
-    FROM subscriptions earlier
-    WHERE earlier.payee_id = s.payee_id
-      AND earlier.amount_cents = s.amount_cents
-      AND earlier.id < s.id
-      AND (earlier.cancelled_at IS NULL OR t.posted_date <= earlier.cancelled_at)
-);
-
+INSERT OR IGNORE INTO schema_version (version) VALUES (1);
 INSERT OR IGNORE INTO app_settings (id, base_currency) VALUES (1, 'USD');
 
--- Default chart of accounts, seeded once at init time (INSERT OR IGNORE, so
--- re-running this script against an existing database is a no-op here).
 INSERT OR IGNORE INTO accounts (name, type, budget, is_system, is_active) VALUES
     ('Unknown', 'expense', 0, 1, 1),
     ('Subscriptions', 'expense', 1, 1, 1),

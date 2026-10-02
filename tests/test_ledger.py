@@ -10,8 +10,25 @@ def group_totals(conn):
 
 def legs_for_description(conn, description):
     return conn.execute(
-        "SELECT account_id, amount_cents, group_id FROM ledger WHERE description = ?",
+        """
+        SELECT l.account_id, l.amount_cents, l.group_id, t.posted_date
+        FROM ledger l
+        JOIN transactions t ON t.id = l.transaction_id
+        WHERE l.group_id IN (
+            SELECT own.group_id
+            FROM ledger own
+            JOIN transactions mine ON mine.id = own.transaction_id AND mine.account_id = own.account_id
+            WHERE mine.raw_description = ?
+        )
+        ORDER BY l.id
+        """,
         (description,),
+    ).fetchall()
+
+
+def ledger_rows(conn):
+    return conn.execute(
+        "SELECT group_id, transaction_id, account_id, amount_cents FROM ledger ORDER BY id"
     ).fetchall()
 
 
@@ -290,3 +307,93 @@ def test_differently_worded_transfer_legs_still_link(
 
     legs = legs_for_description(conn, "ONLINE PAYMENT TO CREDIT CARD")
     assert {leg["account_id"] for leg in legs} == {checking, credit_card}
+
+
+def test_each_transfer_leg_posts_under_its_own_transaction_and_date(
+    conn, account_factory, transaction_factory, transfer_rule_factory
+):
+    checking = account_factory("Test Checking")
+    savings = account_factory("Test Savings")
+    transfer_rule_factory("MOVE")
+
+    transaction_factory(checking, "2026-01-31", -5000, "MOVE TO SAVINGS")
+    transaction_factory(savings, "2026-02-01", 5000, "MOVE FROM CHECKING")
+
+    rebuild_ledger()
+
+    legs = {leg["account_id"]: leg for leg in legs_for_description(conn, "MOVE TO SAVINGS")}
+    assert legs[checking]["posted_date"] == "2026-01-31"
+    assert legs[savings]["posted_date"] == "2026-02-01"
+    assert legs[checking]["group_id"] == legs[savings]["group_id"]
+
+
+def test_rebuilding_twice_gives_the_same_ledger(
+    conn, account_factory, transaction_factory, transfer_rule_factory
+):
+    checking = account_factory("Test Checking")
+    savings = account_factory("Test Savings")
+    transfer_rule_factory("MOVE")
+    transaction_factory(checking, "2026-01-05", -450, "COFFEE SHOP")
+    transaction_factory(checking, "2026-01-06", -5000, "MOVE TO SAVINGS")
+    transaction_factory(savings, "2026-01-06", 5000, "MOVE TO SAVINGS")
+
+    rebuild_ledger()
+    first = ledger_rows(conn)
+    rebuild_ledger()
+
+    assert ledger_rows(conn) == first
+
+
+def test_every_transaction_posts_to_its_own_account_exactly_once(
+    conn, account_factory, transaction_factory, transfer_rule_factory
+):
+    checking = account_factory("Test Checking")
+    savings = account_factory("Test Savings")
+    transfer_rule_factory("MOVE")
+    for day in range(1, 6):
+        transaction_factory(checking, f"2026-01-0{day}", -100 * day, f"SHOP {day}")
+    transaction_factory(checking, "2026-01-06", -5000, "MOVE TO SAVINGS")
+    transaction_factory(savings, "2026-01-07", 5000, "MOVE TO SAVINGS")
+
+    rebuild_ledger()
+
+    own_lines = conn.execute("""
+        SELECT t.id, COUNT(l.id) AS lines
+        FROM transactions t
+        LEFT JOIN ledger l ON l.transaction_id = t.id AND l.account_id = t.account_id
+        GROUP BY t.id
+    """).fetchall()
+    assert all(row["lines"] == 1 for row in own_lines)
+    assert all(balance == 0 for balance in group_totals(conn).values())
+
+
+def test_a_regex_rule_can_use_character_classes(conn, account_factory, transaction_factory):
+    checking = account_factory("Test Checking")
+    rent = account_factory("Test Rent", type="expense")
+    transaction_factory(checking, "2026-01-05", -90000, "upi/12345/landlord")
+    conn.execute(
+        "INSERT INTO account_rules (match_type, pattern, account_id) VALUES ('regex', ?, ?)",
+        (r"^UPI/\d+/LANDLORD$", rent),
+    )
+
+    rebuild_ledger()
+
+    assert {leg["account_id"] for leg in legs_for_description(conn, "upi/12345/landlord")} == {checking, rent}
+
+
+def test_a_contains_rule_matches_the_description_or_its_payee_key(conn, account_factory, transaction_factory):
+    checking = account_factory("Test Checking")
+    loans = account_factory("Test Loan", type="expense")
+    transaction_factory(checking, "2026-01-05", -50000, "FIRST/NATIONAL/HOME/LOAN/12345")
+    conn.execute(
+        "INSERT INTO account_rules (match_type, pattern, account_id) "
+        "VALUES ('contains', 'FIRST NATIONAL HOME', ?)",
+        (loans,),
+    )
+
+    rebuild_ledger()
+
+    assert {leg["account_id"] for leg in legs_for_description(conn, "FIRST/NATIONAL/HOME/LOAN/12345")} == {
+        checking,
+        loans,
+    }

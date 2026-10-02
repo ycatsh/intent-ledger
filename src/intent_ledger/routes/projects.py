@@ -1,4 +1,4 @@
-from flask import Blueprint, abort, flash, redirect, render_template, request, send_file, url_for
+from flask import Blueprint, abort, flash, redirect, render_template, request, url_for
 
 from intent_ledger.accounting.projects import (
     create_project,
@@ -15,6 +15,7 @@ from intent_ledger.accounting.projects import (
 from intent_ledger.analytics.charts import PALETTE, line_chart
 from intent_ledger.analytics.workbook import export_project_report
 from intent_ledger.domain.money import Money
+from intent_ledger.routes.downloads import send_export
 
 projects_bp = Blueprint("projects", __name__)
 
@@ -90,11 +91,11 @@ def projects_export():
         abort(404)
 
     try:
-        path = export_project_report(project_id)
+        export = export_project_report(project_id)
     except ValueError:
         abort(404)
 
-    return send_file(path, as_attachment=True, download_name=path.name)
+    return send_export(export)
 
 
 @projects_bp.post("/projects/new")

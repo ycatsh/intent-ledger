@@ -11,7 +11,7 @@ def add_manual_transaction(fields: dict):
     category_account_id = fields.get("category_account_id")
     payee_name = (fields.get("payee_name") or "").strip()
     posted_date = fields.get("posted_date")
-    amount = fields.get("amount")
+    amount_cents = fields.get("amount_cents")
 
     if not from_account_id:
         raise ValueError("Account is required.")
@@ -21,11 +21,7 @@ def add_manual_transaction(fields: dict):
         raise ValueError("Account and category must differ.")
     if not posted_date:
         raise ValueError("Date is required.")
-    if not amount:
-        raise ValueError("Amount is required.")
-
-    amount_cents = round(amount * 100)
-    if amount_cents == 0:
+    if not amount_cents:
         raise ValueError("Amount must be non-zero.")
 
     with db.transaction() as conn:

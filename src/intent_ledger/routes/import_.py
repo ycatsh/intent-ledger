@@ -17,7 +17,6 @@ import_bp = Blueprint("import", __name__)
 
 @import_bp.get("/import")
 def import_page():
-    accounts = [a for a in get_active_accounts() if a["type"] in ("asset", "liability")]
     account_names = {a["id"]: a["name"] for a in get_all_accounts()}
 
     pending = list_pending_statements()
@@ -27,9 +26,13 @@ def import_page():
     return render_template(
         "import.html",
         pending=pending,
-        accounts=accounts,
+        accounts=_importable_accounts(),
         parsers=list(PARSERS.values()),
     )
+
+
+def _importable_accounts():
+    return [a for a in get_active_accounts() if a["type"] in ("asset", "liability")]
 
 
 @import_bp.post("/import/upload")
@@ -42,7 +45,7 @@ def import_upload():
         flash("No files selected.", "error")
         return redirect(url_for("import.import_page"))
 
-    if account_id is None:
+    if account_id not in {account["id"] for account in _importable_accounts()}:
         flash("Choose an account before uploading.", "error")
         return redirect(url_for("import.import_page"))
 
@@ -58,10 +61,10 @@ def import_upload():
 
 @import_bp.post("/import/<int:account_id>/parser")
 def import_set_parser(account_id):
-    parser_slug = request.get_json(silent=True) or {}
-    parser_slug = parser_slug.get("parser_slug")
+    body = request.get_json(silent=True)
+    parser_slug = body.get("parser_slug") if isinstance(body, dict) else None
 
-    if parser_slug not in PARSERS:
+    if not isinstance(parser_slug, str) or parser_slug not in PARSERS:
         return jsonify(ok=False, error="Unknown parser."), 400
 
     set_account_default_parser(account_id, parser_slug)

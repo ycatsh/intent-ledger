@@ -1,5 +1,6 @@
-from flask import Blueprint, flash, redirect, render_template, request, url_for
+from flask import Blueprint, abort, flash, redirect, render_template, request, url_for
 
+from intent_ledger import forms
 from intent_ledger.accounting.accounts import (
     get_all_account_names,
     get_all_accounts,
@@ -7,7 +8,7 @@ from intent_ledger.accounting.accounts import (
     get_payee_default_categories,
 )
 from intent_ledger.accounting.inbox import assign_all, get_unknown_txn_count, get_unknown_txn_groups
-from intent_ledger.service import rebuild_ledger_and_subscriptions
+from intent_ledger.service import ledger_change
 
 inbox_bp = Blueprint("inbox", __name__)
 
@@ -35,16 +36,19 @@ def inbox():
 
 @inbox_bp.post("/assign")
 def inbox_assign_payee():
-    group_ids = request.form.getlist("ids", type=int)
     smart = request.form.get("smart") == "1"
     flat = request.form.get("flat") == "1"
     assignments = []
 
-    for group_id in group_ids:
-        payee = request.form.get(f"payee_{group_id}", "")
-        account = request.form.get(f"account_{group_id}", "")
-        member_ids = [int(x) for x in request.form.get(f"members_{group_id}", "").split(",") if x]
-        assignments.extend((txn_id, payee, account) for txn_id in member_ids)
+    try:
+        group_ids = forms.integers(request.form, "ids", "group")
+        for group_id in group_ids:
+            payee = request.form.get(f"payee_{group_id}", "")
+            account = request.form.get(f"account_{group_id}", "")
+            members = request.form.get(f"members_{group_id}", "").split(",")
+            assignments.extend((forms.whole_number(x, "transaction"), payee, account) for x in members if x)
+    except ValueError:
+        abort(400)
 
     redirect_args = {"smart": "1" if smart else None, "flat": "1" if flat else None}
 
@@ -53,8 +57,8 @@ def inbox_assign_payee():
         return redirect(url_for("inbox.inbox", **redirect_args))
 
     try:
-        assign_all(assignments)
-        rebuild_ledger_and_subscriptions()
+        with ledger_change():
+            assign_all(assignments)
         flash(f"Categorized {len(assignments)} transaction(s).", "success")
         return redirect(url_for("inbox.inbox", **redirect_args))
     except ValueError as e:

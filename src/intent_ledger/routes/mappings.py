@@ -1,9 +1,11 @@
 from flask import Blueprint, flash, jsonify, redirect, render_template, request, url_for
 
+from intent_ledger import forms
 from intent_ledger.accounting.accounts import dismiss_account_review
 from intent_ledger.accounting.mappings import get_mappings_page, save_mappings
 from intent_ledger.accounting.payees import quick_create_payee
 from intent_ledger.routes.navigation import active_tab
+from intent_ledger.service import ledger_change
 
 mappings_bp = Blueprint("mappings", __name__)
 
@@ -35,22 +37,25 @@ def mappings_ignore_account(account_id):
 
 @mappings_bp.post("/mappings/save")
 def mappings_save():
-    changes = request.get_json(force=True).get("changes", [])
-
     try:
-        id_map = save_mappings(changes)
+        changes = forms.json_object(request.get_json(force=True, silent=True)).get("changes", [])
+        with ledger_change() as change:
+            id_map = save_mappings(changes)
     except ValueError as e:
         return jsonify(ok=False, error=str(e)), 400
 
-    return jsonify(ok=True, applied=len(changes), id_map=id_map)
+    return jsonify(ok=True, applied=len(changes), id_map=id_map, recategorized=change.recategorized)
 
 
 @mappings_bp.post("/payees/quick-create")
 def payees_quick_create():
-    data = request.get_json(force=True) or {}
-
     try:
-        payee = quick_create_payee(data.get("name", ""), data.get("account_id"))
+        data = forms.json_object(request.get_json(force=True, silent=True))
+        name = data.get("name", "")
+        if not isinstance(name, str):
+            raise ValueError("Name must be text.")
+
+        payee = quick_create_payee(name, data.get("account_id"))
     except ValueError as e:
         return jsonify(ok=False, error=str(e)), 400
 

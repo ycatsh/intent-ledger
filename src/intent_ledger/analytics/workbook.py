@@ -25,12 +25,9 @@ from intent_ledger.analytics.reports import (
     get_monthly_summary,
     get_payee_summary,
 )
-from intent_ledger.config import DATA_DIR
 from intent_ledger.db import db
 from intent_ledger.domain.money import Money
 from intent_ledger.settings import get_export_format, today
-
-FINANCE_EXPORT_DIR = DATA_DIR / "finance" / "exports"
 
 HEADER_FILL = PatternFill(
     fill_type="solid",
@@ -63,32 +60,27 @@ GRAND_TOTAL_BORDER = Border(top=Side(style="thin", color="C9CFD6"))
 TRANSACTIONS_HEADERS = ["Date", "Payee", "Category", "Type", "Debit", "Credit", "Description"]
 
 
-def _export_path(filename):
-    FINANCE_EXPORT_DIR.mkdir(parents=True, exist_ok=True)
-    return FINANCE_EXPORT_DIR / filename
-
-
-def _save_workbook(wb, stem):
-    """Save `wb` under `stem` in the app's configured export format
-    (Settings > Export format). CSV can't hold more than one sheet per file,
-    so a multi-sheet report becomes a .zip of one .csv per sheet instead -
+def _save_workbook(wb, stem) -> tuple[str, bytes]:
+    """Render `wb` as a (filename, bytes) pair in the app's configured export
+    format (Settings > Export format). CSV can't hold more than one sheet per
+    file, so a multi-sheet report becomes a .zip of one .csv per sheet instead:
     still a single download, same data, no formatting.
     """
     with db.transaction() as conn:
         fmt = get_export_format(conn)
 
     if fmt == "csv":
-        return _save_as_csv(wb, stem)
+        return f"{stem}.zip", _csv_archive(wb)
 
-    path = _export_path(f"{stem}.xlsx")
-    wb.save(path)
-    return path
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    return f"{stem}.xlsx", buffer.getvalue()
 
 
-def _save_as_csv(wb, stem):
-    path = _export_path(f"{stem}.zip")
+def _csv_archive(wb) -> bytes:
+    archive_buffer = io.BytesIO()
 
-    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
+    with zipfile.ZipFile(archive_buffer, "w", zipfile.ZIP_DEFLATED) as archive:
         for sheet in wb.worksheets:
             buffer = io.StringIO()
             writer = csv.writer(buffer)
@@ -96,7 +88,7 @@ def _save_as_csv(wb, stem):
                 writer.writerow(["" if v is None else v for v in row])
             archive.writestr(f"{_slugify(sheet.title)}.csv", buffer.getvalue())
 
-    return path
+    return archive_buffer.getvalue()
 
 
 def _collapse_column(sheet, index):
@@ -105,8 +97,8 @@ def _collapse_column(sheet, index):
     sheet.column_dimensions[letter].hidden = True
 
 
-def _round_money(value):
-    return round(value, 2) or 0.0
+def _cents(amount: float) -> int:
+    return round(amount * 100)
 
 
 def _positive_amounts(rows):
@@ -239,11 +231,11 @@ def export_account_statement(account_id, search=None):
 
     full = get_ledger_entries(account_id, sort="date_asc")
 
-    running = 0.0
+    running = 0
     balances = {}
     for t in full:
-        running = _round_money(running + t["amount"])
-        balances[t["transaction_hash"]] = running
+        running += _cents(t["amount"])
+        balances[t["transaction_hash"]] = Money(running).amount
 
     filtered = [
         t
@@ -264,8 +256,8 @@ def export_account_statement(account_id, search=None):
 
     stem = f"statement_{_slugify(account['name'])}_{date_range}"
 
-    total_debit = _round_money(-sum(t["amount"] for t in filtered if t["amount"] < 0))
-    total_credit = _round_money(sum(t["amount"] for t in filtered if t["amount"] > 0))
+    total_debit = Money(-sum(_cents(t["amount"]) for t in filtered if t["amount"] < 0)).amount
+    total_credit = Money(sum(_cents(t["amount"]) for t in filtered if t["amount"] > 0)).amount
 
     headers = ["Date", "Category", "Type", "Payee", "Debit", "Credit", "Balance"]
     body = _statement_rows(filtered, balances)
@@ -363,12 +355,12 @@ def _expand_splits(transactions):
 def _category_payee_sheet(sheet, transactions):
     sheet.title = "By Category"
 
-    groups = defaultdict(lambda: defaultdict(lambda: [0.0, 0]))
+    groups = defaultdict(lambda: defaultdict(lambda: [0, 0]))
     for t in _expand_splits(transactions):
         category = t["category"] or "Uncategorized"
         payee = t["payee"] or "Unknown"
         entry = groups[category][payee]
-        entry[0] += t["amount"]
+        entry[0] += _cents(t["amount"])
         entry[1] += 1
 
     sheet.append(["Category / Payee", "Amount", "Transactions"])
@@ -378,12 +370,12 @@ def _category_payee_sheet(sheet, transactions):
     sheet["B1"].alignment = Alignment(horizontal="right")
     sheet["C1"].alignment = Alignment(horizontal="right")
 
-    grand_total = 0.0
+    grand_total = 0
     grand_count = 0
 
     for category in sorted(groups):
         payees = groups[category]
-        total_amount = 0.0
+        total_amount = 0
         total_count = 0
 
         sheet.append([category, "", ""])
@@ -394,7 +386,7 @@ def _category_payee_sheet(sheet, transactions):
 
         for payee in sorted(payees):
             amount, count = payees[payee]
-            sheet.append([payee, _round_money(amount), count])
+            sheet.append([payee, Money(amount).amount, count])
             row = sheet.max_row
             sheet.cell(row=row, column=1).alignment = Alignment(indent=1)
             sheet.cell(row=row, column=2).number_format = ACCOUNTING_FORMAT
@@ -403,7 +395,7 @@ def _category_payee_sheet(sheet, transactions):
             total_amount += amount
             total_count += count
 
-        sheet.append(["Total", _round_money(total_amount), total_count])
+        sheet.append(["Total", Money(total_amount).amount, total_count])
         total_row = sheet.max_row
         for cell in sheet[total_row]:
             cell.font = Font(bold=True, italic=True)
@@ -418,7 +410,7 @@ def _category_payee_sheet(sheet, transactions):
 
         sheet.append([])
 
-    sheet.append(["Grand Total", _round_money(grand_total), grand_count])
+    sheet.append(["Grand Total", Money(grand_total).amount, grand_count])
     grand_row = sheet.max_row
     for cell in sheet[grand_row]:
         cell.font = Font(bold=True, size=12)
@@ -457,7 +449,12 @@ def _balance_sheet_sheet(
         ("Filter", search or "All transactions", "Generated", today().isoformat()),
         ("Opening Balance", opening_balance, "Closing Balance", closing_balance),
         ("Total Debits", total_debit, "Total Credits", total_credit),
-        ("Net Change", _round_money(closing_balance - opening_balance), "Transactions", count),
+        (
+            "Net Change",
+            Money(_cents(closing_balance) - _cents(opening_balance)).amount,
+            "Transactions",
+            count,
+        ),
     ]
     for label1, value1, label2, value2 in info_pairs:
         sheet.append([label1, value1, "", label2, value2])
@@ -485,7 +482,7 @@ def _balance_sheet_sheet(
         sheet.append([title, "", ""])
         sheet.cell(row=sheet.max_row, column=1).font = Font(bold=True, size=12)
 
-        section_total = 0.0
+        section_total = 0
 
         for account_name in sorted(accounts):
             entries = sorted(accounts[account_name], key=lambda t: t["date"])
@@ -497,7 +494,7 @@ def _balance_sheet_sheet(
                 cell.font = Font(bold=True)
                 cell.fill = CATEGORY_FILL
 
-            account_total = 0.0
+            account_total = 0
             for t in entries:
                 amount = -t["amount"]
                 row_values = [
@@ -510,9 +507,9 @@ def _balance_sheet_sheet(
                 sheet.row_dimensions[row].outlineLevel = 1
                 sheet.cell(row=row, column=2).number_format = ACCOUNTING_FORMAT
                 sheet.cell(row=row, column=3).number_format = ACCOUNTING_FORMAT
-                account_total += amount
+                account_total += _cents(amount)
 
-            sheet.append(["Subtotal", "", _round_money(account_total)])
+            sheet.append(["Subtotal", "", Money(account_total).amount])
             sub_row = sheet.max_row
             for cell in sheet[sub_row]:
                 cell.font = Font(bold=True, italic=True)
@@ -522,7 +519,7 @@ def _balance_sheet_sheet(
             section_total += account_total
             sheet.append([])
 
-        sheet.append([f"Total {title}", "", _round_money(section_total)])
+        sheet.append([f"Total {title}", "", Money(section_total).amount])
         total_row = sheet.max_row
         for cell in sheet[total_row]:
             cell.font = Font(bold=True)
@@ -535,7 +532,7 @@ def _balance_sheet_sheet(
     assets_total = _section("Assets", assets)
     liabilities_total = _section("Liabilities", liabilities)
 
-    sheet.append(["Net", "", _round_money(assets_total - liabilities_total)])
+    sheet.append(["Net", "", Money(assets_total - liabilities_total).amount])
     for cell in sheet[sheet.max_row]:
         cell.font = Font(bold=True, size=12)
         cell.border = GRAND_TOTAL_BORDER

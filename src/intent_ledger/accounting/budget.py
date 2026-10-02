@@ -1,6 +1,7 @@
 from calendar import month_name, monthrange
 from datetime import date
 
+from intent_ledger import forms
 from intent_ledger.accounting.repositories.budget import BudgetRepository
 from intent_ledger.db import db
 from intent_ledger.domain.money import Money
@@ -454,23 +455,25 @@ def save_budget(form, period: str):
             SELECT id FROM accounts WHERE type = 'expense' AND budget = 1
         """).fetchall()
 
-    with db.transaction() as conn:
         budget_repo = BudgetRepository(conn)
         for cat in categories:
-            value = form.get(f"budget_{cat['id']}", type=float)
-            amount_cents = round(value * 100) if value else 0
-            budget_repo.set_amount_cents(cat["id"], period, amount_cents)
+            amount = forms.optional_money(form, f"budget_{cat['id']}", "Every budget")
+            if amount is not None and amount.cents < 0:
+                raise ValueError("Budgets can't be negative.")
+            budget_repo.set_amount_cents(cat["id"], period, amount.cents if amount else 0)
 
 
 def save_goal(form, account_id: int):
-    target = form.get(f"goal_amount_{account_id}", type=float)
-    target_date = form.get(f"goal_date_{account_id}") or None
+    target = forms.optional_money(form, f"goal_amount_{account_id}", "Goal amount")
+    target_date = forms.optional_iso_date(form, f"goal_date_{account_id}", "Goal date")
 
     if target is None:
         return False
+    if target.cents < 0:
+        raise ValueError("Goal amount can't be negative.")
 
     with db.transaction() as conn:
-        BudgetRepository(conn).set_goal(account_id, round(target * 100), target_date)
+        BudgetRepository(conn).set_goal(account_id, target.cents, target_date)
 
     return True
 
@@ -481,21 +484,24 @@ def delete_goal(account_id: int):
 
 
 def move_budget(form, account_id: int, period: str):
-    destination_id = form.get(f"move_to_{account_id}", type=int)
-    amount = form.get(f"move_amount_{account_id}", type=float)
+    destination_id = forms.optional_integer(form, f"move_to_{account_id}", "category")
+    amount = forms.optional_money(form, f"move_amount_{account_id}", "Amount to move")
 
-    if not destination_id or not amount:
-        return 0.0  # missing/invalid input
-
-    if destination_id == account_id:
-        return 0.0  # moving a category's budget to itself is a no-op, not an error
-
-    amount_cents = round(abs(amount) * 100)
+    if destination_id is None or amount is None or destination_id == account_id:
+        return 0.0
+    if amount.cents <= 0:
+        raise ValueError("Amount to move must be more than zero.")
 
     with db.transaction() as conn:
+        destination = conn.execute(
+            "SELECT 1 FROM accounts WHERE id = ? AND type = 'expense' AND budget = 1", (destination_id,)
+        ).fetchone()
+        if destination is None:
+            raise ValueError("Choose a budget category to move to.")
+
         budget_repo = BudgetRepository(conn)
         available = budget_repo.get_amount_cents(account_id, period)
-        moved = min(amount_cents, max(available, 0))
+        moved = min(amount.cents, max(available, 0))
 
         if moved <= 0:
             return 0.0

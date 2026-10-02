@@ -108,3 +108,47 @@ def test_changing_parent_to_a_different_type_is_rejected(conn, account_factory):
                 }
             ]
         )
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"op": "update", "fields": {"name": "Uncategorized"}},
+        {"op": "update", "fields": {"type": "income"}},
+        {"op": "delete"},
+    ],
+)
+@pytest.mark.parametrize("name", ["Unknown", "Subscriptions"])
+def test_built_in_accounts_cannot_be_renamed_retyped_or_deleted(conn, name, change):
+    account_id = conn.execute("SELECT id FROM accounts WHERE name = ?", (name,)).fetchone()["id"]
+
+    with pytest.raises(ValueError, match="built in"):
+        save_mappings([{"table": "accounts", "id": account_id, **change}])
+
+    assert conn.execute("SELECT name FROM accounts WHERE id = ?", (account_id,)).fetchone()["name"] == name
+
+
+def test_built_in_accounts_can_still_be_edited_otherwise(conn):
+    account_id = conn.execute("SELECT id FROM accounts WHERE name = 'Unknown'").fetchone()["id"]
+
+    save_mappings([{"op": "update", "table": "accounts", "id": account_id, "fields": {"name": "Unknown"}}])
+    save_mappings([{"op": "update", "table": "accounts", "id": account_id, "fields": {"budget": 1}}])
+
+    assert conn.execute("SELECT budget FROM accounts WHERE id = ?", (account_id,)).fetchone()["budget"] == 1
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"op": "update"},
+        [["op", "update"]],
+        [{"op": "update", "table": ["accounts"], "id": 1}],
+        [{"op": "update", "table": "accounts", "id": 1, "fields": ["name"]}],
+        [{"op": "update", "table": "accounts", "id": 1, "fields": {"name": ["A"]}}],
+        [{"op": "update", "table": "payees", "id": 1, "fields": {"canonical_name": 5}}],
+        [{"op": "insert", "table": "counterparties", "temp_id": "t1", "fields": {}}],
+    ],
+)
+def test_malformed_changes_are_rejected_with_a_message(conn, changes):
+    with pytest.raises(ValueError):
+        save_mappings(changes)

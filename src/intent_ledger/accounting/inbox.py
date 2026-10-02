@@ -5,7 +5,7 @@ from intent_ledger.accounting.accounts import get_or_create_expense_account
 from intent_ledger.accounting.payees import get_or_create_payee, normalize
 from intent_ledger.accounting.repositories.payees import PayeeRepository
 from intent_ledger.accounting.repositories.rules_overrides import OverrideRepository
-from intent_ledger.accounting.rules import get_payee_account_id, learn_account_rule
+from intent_ledger.accounting.rules import find_matching_rule, get_payee_account_id, learn_account_rule
 from intent_ledger.db import db
 from intent_ledger.importer.normalize import extract_payee_key
 
@@ -206,7 +206,12 @@ def _assign(conn, transaction_id: int, payee_name: str, account_name: str):
         if txn is None:
             raise ValueError("Transaction not found.")
 
-        learn_account_rule(conn, txn["normalized_description"] or txn["raw_description"], account_id)
+        pattern = txn["normalized_description"] or txn["raw_description"]
+        learn_account_rule(conn, pattern, account_id)
+
+        learned = {"match_type": "contains", "pattern": pattern}
+        if find_matching_rule([learned], txn["raw_description"]) is None:
+            _set_override(conn, transaction_id, account_id)
         return
 
     payee_id = get_or_create_payee(conn, payee_name, normalize(payee_name), account_id)
