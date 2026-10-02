@@ -100,6 +100,7 @@ def test_a_bad_statement_is_reported_and_the_others_still_import(
 
     (ingest / "good.csv").write_text("date,description,withdrawal,deposit\n2026-01-05,COFFEE,4.50,\n")
     (ingest / "bad.csv").write_text("date,description\n2026-01-05,COFFEE\n")
+    (ingest / "orphan.csv").write_text("date,description,withdrawal,deposit\n2026-01-06,TEA,2.00,\n")
     entry = {"uploaded_at": 0, "source": "test", "account_id": checking, "parser_slug": "canonical"}
     uploads.MANIFEST_PATH.write_text(json.dumps({"good.csv": entry, "bad.csv": entry}))
 
@@ -108,4 +109,5 @@ def test_a_bad_statement_is_reported_and_the_others_still_import(
 
     assert summaries["good.csv"]["inserted"] == 1
     assert "Missing required column" in summaries["bad.csv"]["error"]
+    assert summaries["orphan.csv"]["error"] == "No account chosen for this statement."
     assert conn.execute("SELECT COUNT(*) AS n FROM ledger").fetchone()["n"] == 2

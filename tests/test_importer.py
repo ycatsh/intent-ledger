@@ -48,7 +48,7 @@ def test_same_day_same_amount_different_description_are_not_deduped(tmp_path, co
         tmp_path / "statement.csv",
         "date,description,withdrawal,deposit,balance\n"
         "2026-01-05,COFFEE SHOP,4.50,,995.50\n"
-        "2026-01-05,BOOKSTORE,4.50,,995.50\n",
+        "2026-01-05,BOOKSTORE,4.50,,991.00\n",
     )
 
     summary = import_statement(path, account_id=checking_account)
@@ -162,3 +162,34 @@ def test_reimporting_restores_a_copy_an_older_import_collapsed(tmp_path, conn, c
 
     assert (summary["inserted"], summary["duplicates"]) == (1, 1)
     assert conn.execute("SELECT COUNT(*) AS n FROM transactions").fetchone()["n"] == 2
+
+
+@pytest.mark.parametrize(
+    "rows",
+    [
+        "2026-01-01,SALARY,,100.00,100.00\n2026-01-02,COFFEE,4.50,,95.50\n2026-01-03,BOOKS,10.00,,85.50\n",
+        "2026-01-03,BOOKS,10.00,,85.50\n2026-01-02,COFFEE,4.50,,95.50\n2026-01-01,SALARY,,100.00,100.00\n",
+    ],
+)
+def test_a_statement_whose_running_balance_adds_up_imports_in_either_order(
+    conn, account_factory, tmp_path, rows
+):
+    checking = account_factory("Test Checking")
+    path = tmp_path / "s.csv"
+    path.write_text("date,description,withdrawal,deposit,balance\n" + rows)
+
+    assert import_statement(path, checking)["inserted"] == 3
+
+
+def test_a_statement_whose_running_balance_breaks_is_rejected(conn, account_factory, tmp_path):
+    checking = account_factory("Test Checking")
+    path = tmp_path / "s.csv"
+    path.write_text(
+        "date,description,withdrawal,deposit,balance\n"
+        "2026-01-01,SALARY,,100.00,100.00\n"
+        "2026-01-02,COFFEE,4.50,,104.50\n"
+    )
+
+    with pytest.raises(ValueError, match="running balance"):
+        import_statement(path, checking)
+    assert conn.execute("SELECT COUNT(*) AS n FROM transactions").fetchone()["n"] == 0

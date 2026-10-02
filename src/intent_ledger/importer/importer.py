@@ -34,6 +34,8 @@ def import_statement(statement_path: str | Path, account_id: int, parser_slug: s
 
     statement = parser.parse(statement_path)
     transactions = statement["transactions"]
+    if not statement["row_errors"]:
+        _check_running_balance(transactions)
     results = []
 
     with db.transaction() as conn:
@@ -63,6 +65,27 @@ def import_statement(statement_path: str | Path, account_id: int, parser_slug: s
         "row_errors": statement["row_errors"],
         "results": results,
     }
+
+
+def _check_running_balance(transactions):
+    if len(transactions) < 2 or any(txn["balance_cents"] is None for txn in transactions):
+        return
+
+    break_at = _balance_break(transactions)
+    if break_at is not None and _balance_break(transactions[::-1]) is not None:
+        txn = transactions[break_at]
+        raise ValueError(
+            f"The running balance doesn't add up at the {txn['posted_date'].isoformat()} row "
+            f"'{txn['raw_description']}'. Check the file for a missing or mis-signed row."
+        )
+
+
+def _balance_break(transactions) -> int | None:
+    for index in range(1, len(transactions)):
+        previous, current = transactions[index - 1], transactions[index]
+        if current["balance_cents"] != previous["balance_cents"] + current["amount_cents"]:
+            return index
+    return None
 
 
 def _ensure_account_active(conn, account_id: int) -> None:

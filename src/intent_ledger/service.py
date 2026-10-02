@@ -1,3 +1,4 @@
+import logging
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,6 +17,8 @@ from intent_ledger.importer.importer import import_statement
 from intent_ledger.importer.uploads import INGEST_DIR, list_pending_statements
 
 EXPORT_DIR = DATA_DIR / "exports"
+
+log = logging.getLogger(__name__)
 
 
 def initialize_database():
@@ -49,18 +52,19 @@ def import_pending_statements() -> list[dict]:
 
     with db.transaction() as conn:
         for entry in list_pending_statements():
-            if entry["account_id"] is None or entry["parser_slug"] is None:
-                continue
-
             path = INGEST_DIR / entry["name"]
 
             try:
+                if entry["account_id"] is None or entry["parser_slug"] is None:
+                    raise ValueError("No account chosen for this statement.")
                 with savepoint(conn):
                     summary = import_statement(
                         path, account_id=entry["account_id"], parser_slug=entry["parser_slug"]
                     )
-            except ValueError as e:
-                summary = {"statement": str(path), "error": str(e), "inserted": 0, "row_errors": []}
+            except Exception as e:
+                log.exception("Could not import statement %s", entry["name"])
+                error = str(e) or type(e).__name__
+                summary = {"statement": str(path), "error": error, "inserted": 0, "row_errors": []}
 
             summaries.append(summary)
 
