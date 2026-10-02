@@ -18,7 +18,7 @@
     {% endif %}
   {% endset %}
   {% set controls %}
-    <input type="text" list="project-options" id="project-picker" class="input w-56"
+    <input type="text" list="project-options" id="project-picker" class="input w-56" data-url="{{ url_for('projects.projects') }}"
            placeholder="Search projects..." value="{{ project.name if project else '' }}" autocomplete="off">
     <datalist id="project-options">
       {% for p in projects %}
@@ -167,15 +167,5 @@
 {% block scripts %}
 {{ chart_js() }}
 <script src="{{ url_for('static', filename='js/services/charts.js') }}"></script>
-<script>
-  document.getElementById("project-picker")?.addEventListener("change", (event) => {
-    const options = document.getElementById("project-options").options;
-    for (const option of options) {
-      if (option.value === event.target.value) {
-        window.location.href = "{{ url_for('projects.projects') }}?project_id=" + option.dataset.id;
-        return;
-      }
-    }
-  });
-</script>
+<script src="{{ url_for('static', filename='js/services/projects.js') }}"></script>
 {% endblock %}

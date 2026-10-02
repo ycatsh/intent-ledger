@@ -1,5 +1,5 @@
 import click
-from flask import Flask
+from flask import Flask, request
 from flask_wtf import CSRFProtect
 from werkzeug.middleware.proxy_fix import ProxyFix
 
@@ -21,12 +21,26 @@ from intent_ledger.service import (
 
 csrf = CSRFProtect()
 
+CONTENT_SECURITY_POLICY = (
+    "default-src 'self'; "
+    "script-src 'self'; "
+    "style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data:; "
+    "font-src 'self'; "
+    "connect-src 'self'; "
+    "object-src 'none'; "
+    "base-uri 'self'; "
+    "form-action 'self'; "
+    "frame-ancestors 'none'"
+)
+
 
 def create_app() -> Flask:
     app = Flask(__name__)
     app.config["SECRET_KEY"] = config.SECRET_KEY
     app.config["SESSION_COOKIE_HTTPONLY"] = True
     app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+    app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024
 
     if config.TRUSTED_PROXIES:
         hops = config.TRUSTED_PROXIES
@@ -38,11 +52,24 @@ def create_app() -> Flask:
     initialize_database()
 
     register_blueprints(app)
+    app.after_request(_security_headers)
     register_cli(app)
     register_context_processors(app)
     register_template_filters(app)
 
     return app
+
+
+def _security_headers(response):
+    response.headers["Content-Security-Policy"] = CONTENT_SECURITY_POLICY
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "same-origin"
+    if request.is_secure:
+        response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
+    if request.endpoint != "static":
+        response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 def register_cli(app: Flask) -> None:

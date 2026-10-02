@@ -446,3 +446,21 @@ def test_net_worth_on_the_accounts_page_leaves_out_equity(client, conn, account_
     net_worth = page[page.index("Net worth") :]
 
     assert "3,000.00" in net_worth[:200]
+
+
+def test_pages_carry_security_headers_and_no_inline_scripts(client, ids):
+    response = client.get("/inbox")
+    page = response.get_data(as_text=True)
+
+    assert "script-src 'self'" in response.headers["Content-Security-Policy"]
+    assert response.headers["X-Frame-Options"] == "DENY"
+    assert response.headers["Cache-Control"] == "no-store"
+    assert "<script>" not in page
+
+
+def test_an_upload_over_the_size_limit_is_refused(client, ids):
+    statement = (BytesIO(b"x" * (10 * 1024 * 1024 + 1)), "big.csv")
+
+    response = client.post("/import/upload", data={"statements": statement, "account_id": ids["checking"]})
+
+    assert response.status_code == 413
