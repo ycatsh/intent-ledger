@@ -77,7 +77,7 @@
   {% set assets = accounts | selectattr("type", "equalto", "asset") | list %}
   {% set equity = accounts | selectattr("type", "equalto", "equity") | list %}
   {% set liabilities = accounts | selectattr("type", "equalto", "liability") | list %}
-  {% set grand_total = accounts | sum(attribute="balance") %}
+  {% set grand_total = (accounts | rejectattr("type", "equalto", "equity") | sum(attribute="balance_cents")) / 100 %}
   {% set selected_account = accounts | selectattr("id", "equalto", selected_account_id) | first %}
 
   {% call modal("search-help-modal", "Searching the ledger") %}

@@ -430,3 +430,19 @@ def test_every_page_and_export_answers(client, ids, path):
     response = client.get(path.format(**ids))
 
     assert response.status_code == 200, path
+
+
+def test_net_worth_on_the_accounts_page_leaves_out_equity(client, conn, account_factory, transaction_factory):
+    bank = account_factory("Test Bank")
+    opening = account_factory("Test Opening", type="equity")
+    hash_ = transaction_factory(bank, "2026-01-01", 300000, "OPENING")
+    conn.execute(
+        "INSERT INTO transactions_overrides (transaction_hash, account_id) VALUES (?, ?)", (hash_, opening)
+    )
+    conn.commit()
+    rebuild_ledger()
+
+    page = client.get(f"/accounts?account_id={bank}").get_data(as_text=True)
+    net_worth = page[page.index("Net worth") :]
+
+    assert "3,000.00" in net_worth[:200]
