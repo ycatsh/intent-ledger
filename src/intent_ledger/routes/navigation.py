@@ -7,7 +7,7 @@ RETURN_FIELD = "return_to"
 
 
 def is_internal_path(target: str | None) -> bool:
-    if not target or not target.startswith("/") or target.startswith("//"):
+    if not target or not target.startswith("/") or target.startswith("//") or "\\" in target:
         return False
 
     parsed = urlparse(target)

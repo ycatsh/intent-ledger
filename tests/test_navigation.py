@@ -31,7 +31,15 @@ def test_internal_paths_are_accepted(target):
 
 @pytest.mark.parametrize(
     "target",
-    ["", None, "https://evil.example/x", "//evil.example/x", "javascript:alert(1)", "accounts"],
+    [
+        "",
+        None,
+        "https://evil.example/x",
+        "//evil.example/x",
+        "/\\evil.example",
+        "javascript:alert(1)",
+        "accounts",
+    ],
 )
 def test_anything_that_could_leave_the_app_is_rejected(target):
     assert not is_internal_path(target)

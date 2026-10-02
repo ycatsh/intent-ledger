@@ -18,13 +18,13 @@ def get_unknown_txn_count():
     with db.transaction() as conn:
         total = conn.execute(
             """
-            SELECT COUNT(*)
+            SELECT COUNT(DISTINCT l.transaction_id) AS n
             FROM ledger l
             JOIN accounts a
                 ON a.id = l.account_id
             WHERE a.role = 'unknown'
             """
-        ).fetchone()["COUNT(*)"]
+        ).fetchone()["n"]
     return total
 
 

@@ -52,7 +52,7 @@ def import_statement(statement_path: str | Path, account_id: int, parser_slug: s
 
     inserted = sum(1 for r in results if r["status"] == "inserted")
     duplicates = sum(1 for r in results if r["status"] == "duplicate")
-    unresolved = sum(1 for r in results if r.get("payee_id") is None)
+    unresolved = sum(1 for r in results if r["status"] == "inserted" and r["payee_id"] is None)
 
     return {
         "statement": str(statement_path),

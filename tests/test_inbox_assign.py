@@ -5,7 +5,7 @@ from intent_ledger.accounting.accounts import (
     get_all_accounts,
     get_payee_default_categories,
 )
-from intent_ledger.accounting.inbox import _assign
+from intent_ledger.accounting.inbox import _assign, get_unknown_txn_count
 from intent_ledger.accounting.ledger import rebuild_ledger
 from intent_ledger.accounting.rules import fetch_account_rules, find_matching_rule
 
@@ -210,3 +210,22 @@ def test_a_learned_rule_that_cannot_match_its_own_row_pins_the_row_with_an_overr
         (transaction_hash,),
     ).fetchone()
     assert override["name"] == "Test Groceries"
+
+
+def test_the_inbox_count_is_transactions_not_ledger_lines(conn, account_factory, transaction_factory):
+    checking = account_factory("Test Checking")
+    transaction_hash = transaction_factory(checking, "2026-01-05", -1000, "MYSTERY")
+    conn.execute(
+        "INSERT INTO transactions_splits (transaction_hash, account_id, amount_cents) "
+        "SELECT ?, id, 500 FROM accounts WHERE role = 'unknown'",
+        (transaction_hash,),
+    )
+    conn.execute(
+        "INSERT INTO transactions_splits (transaction_hash, account_id, amount_cents) "
+        "SELECT ?, id, 500 FROM accounts WHERE role = 'unknown'",
+        (transaction_hash,),
+    )
+    conn.commit()
+    rebuild_ledger()
+
+    assert get_unknown_txn_count() == 1

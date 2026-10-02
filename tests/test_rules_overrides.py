@@ -354,6 +354,7 @@ def test_an_override_on_a_matched_transfer_is_flagged_as_ignored(
 
     add_override(FakeForm({"transaction_hash": out_hash, "account_id": groceries}))
     add_override(FakeForm({"transaction_hash": lone_hash, "account_id": groceries}))
+    rebuild_ledger()
 
     flags = {row["transaction_hash"]: row["ignored_by_transfer"] for row in get_overrides()}
     assert flags == {out_hash: True, lone_hash: False}

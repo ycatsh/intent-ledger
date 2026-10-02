@@ -4,7 +4,6 @@ from intent_ledger.accounting.repositories.payees import PayeeRepository
 from intent_ledger.accounting.repositories.rules_overrides import OverrideRepository
 from intent_ledger.accounting.repositories.rules_splits import SplitLine, SplitRepository
 from intent_ledger.accounting.rules import default_account_id, fetch_account_rules
-from intent_ledger.accounting.rules_transfers import match_transfer_pairs
 from intent_ledger.db import db
 from intent_ledger.domain.money import Money
 
@@ -83,9 +82,15 @@ def get_overrides():
 
 
 def _transfer_leg_hashes(conn) -> set[str]:
-    transactions = conn.execute("SELECT * FROM transactions").fetchall()
-    pairs = match_transfer_pairs(conn, transactions)
-    return {t["transaction_hash"] for t in transactions if t["id"] in pairs}
+    rows = conn.execute("""
+        SELECT DISTINCT t.transaction_hash
+        FROM ledger l
+        JOIN transactions t ON t.id = l.transaction_id
+        WHERE l.group_id IN (
+            SELECT group_id FROM ledger GROUP BY group_id HAVING COUNT(DISTINCT transaction_id) > 1
+        )
+    """)
+    return {row["transaction_hash"] for row in rows}
 
 
 def get_override_context(transaction_hash):
