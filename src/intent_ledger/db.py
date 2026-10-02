@@ -9,7 +9,7 @@ from intent_ledger.config import DATA_DIR
 
 DB_PATH = DATA_DIR / "accounting.db"
 SCHEMA_PATH = Path(__file__).resolve().parent / "schema.sql"
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 BUSY_TIMEOUT_SECONDS = 15
 
 _open_transaction = ContextVar("open_transaction", default=None)

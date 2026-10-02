@@ -119,6 +119,13 @@ def test_migrating_keeps_the_data_and_applies_every_fix(legacy):
     )[0]
 
     assert query(legacy, "SELECT COUNT(*) FROM transactions")[0][0] == 4
+    assert [
+        tuple(row)
+        for row in query(legacy, "SELECT role, name FROM accounts WHERE role IS NOT NULL ORDER BY id")
+    ] == [
+        ("unknown", "Unknown"),
+        ("subscriptions", "Subscriptions"),
+    ]
     assert tuple(rule) == ("contains", 50, 1)
     assert tuple(savings_leg) == (3, "2026-02-01")
     assert {row[0] for row in query(legacy, "SELECT typeof(group_id) FROM ledger")} == {"integer"}

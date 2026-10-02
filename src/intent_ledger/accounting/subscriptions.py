@@ -92,7 +92,7 @@ def get_subscriptions_page():
             for c in _account_tagged_candidates(conn, tracked_payee_ids):
                 candidates_by_payee.setdefault(c["payee_id"], c)
     except ValueError:
-        pass  # no 'Subscriptions' category account configured yet
+        pass
 
     candidates = list(candidates_by_payee.values())
 
@@ -177,9 +177,9 @@ def _account_tagged_candidates(conn, tracked_payee_ids):
 
 
 def _subscription_account_id(conn) -> int:
-    row = conn.execute("SELECT id FROM accounts WHERE type = 'expense' AND name = 'Subscriptions'").fetchone()
+    row = conn.execute("SELECT id FROM accounts WHERE role = 'subscriptions'").fetchone()
     if not row:
-        raise ValueError("'Subscriptions' category account not found.")
+        raise ValueError("No account is set up to hold subscriptions.")
     return row["id"]
 
 

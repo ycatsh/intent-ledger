@@ -22,7 +22,7 @@ def get_unknown_txn_count():
             FROM ledger l
             JOIN accounts a
                 ON a.id = l.account_id
-            WHERE a.name = 'Unknown'
+            WHERE a.role = 'unknown'
             """
         ).fetchone()["COUNT(*)"]
     return total
@@ -46,7 +46,7 @@ def get_unknown_txn_groups(smart=False, flat=False):
                 ON t.id = l.transaction_id
             LEFT JOIN accounts ta
                 ON ta.id = t.account_id
-            WHERE a.name = 'Unknown'
+            WHERE a.role = 'unknown'
             ORDER BY t.posted_date DESC
             """
         ).fetchall()

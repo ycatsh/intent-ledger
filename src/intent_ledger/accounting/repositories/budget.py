@@ -26,21 +26,6 @@ class BudgetRepository:
             (account_id, period, amount_cents),
         )
 
-    def adjust_amount_cents(self, account_id: int, period: str, delta_cents: int) -> None:
-        """Insert or add a delta as if every account started at 0 - a
-        negative delta against a row that doesn't exist yet still lands at
-        delta_cents, not 0.
-        """
-        self._conn.execute(
-            """
-            INSERT INTO budgets (account_id, period, amount_cents)
-            VALUES (?, ?, ?)
-            ON CONFLICT(account_id, period)
-            DO UPDATE SET amount_cents = amount_cents + ?
-        """,
-            (account_id, period, delta_cents, delta_cents),
-        )
-
     def set_goal(self, account_id: int, target_cents: int, target_date: str | None) -> None:
         self._conn.execute(
             "UPDATE accounts SET goal_target_cents = ?, goal_target_date = ? WHERE id = ?",

@@ -90,15 +90,6 @@
           </tr>
           {% for account in balance_sheet_accounts %}
           <tr data-row-label="{{ account.name }}">
-            {% if account.is_system %}
-            <td>{{ account.name }}</td>
-            <td>{{ account.type }}</td>
-            <td>{{ account.parent_name or "-" }}</td>
-            <td>{{ account.institution or "-" }}</td>
-            <td>{{ account.account_number_last4 or "-" }}</td>
-            <td>{{ "Yes" if account.budget else "No" }}</td>
-            <td>{{ "Yes" if account.is_active else "No" }}</td>
-            {% else %}
             <td>
               <input type="text" class="input input-inline" value="{{ account.name }}" data-mapping-update="accounts:{{ account.id }}:name" autocomplete="off">
             </td>
@@ -129,9 +120,8 @@
             <td>
               <input type="checkbox" data-mapping-update="accounts:{{ account.id }}:is_active" {{ "checked" if account.is_active else "" }} autocomplete="off">
             </td>
-            {% endif %}
             <td class="text-right">
-              {% if not account.is_system %}
+              {% if not account.role %}
               <button type="button" class="btn btn-ghost btn-icon text-negative" aria-label="Delete" data-mapping-delete="accounts:{{ account.id }}">{{ icon("trash") }}</button>
               {% endif %}
             </td>
@@ -186,8 +176,10 @@
           </tr>
           {% for account in category_accounts %}
           <tr class="{{ 'bg-warning-dim' if account.needs_review else '' }}" data-row-label="{{ account.name }}">
-            {% if account.is_system %}
-            <td>{{ account.name }}</td>
+            {% if account.role %}
+            <td>
+              <input type="text" class="input input-inline" value="{{ account.name }}" data-mapping-update="accounts:{{ account.id }}:name" autocomplete="off">
+            </td>
             <td>{{ account.type }}</td>
             <td>{{ account.parent_name or "-" }}</td>
             <td>{{ account.institution or "-" }}</td>
@@ -233,7 +225,7 @@
                 <button type="submit" class="btn btn-ghost text-warning" aria-label="Dismiss review flag">Ignore</button>
               </form>
               {% endif %}
-              {% if not account.is_system %}
+              {% if not account.role %}
               <button type="button" class="btn btn-ghost btn-icon text-negative" aria-label="Delete" data-mapping-delete="accounts:{{ account.id }}">{{ icon("trash") }}</button>
               {% endif %}
             </td>

@@ -61,8 +61,8 @@ class AccountRepository:
 
         cursor = self._conn.execute(
             """
-            INSERT INTO accounts (name, type, budget, is_system, is_active, needs_review)
-            VALUES (?, 'expense', 1, 0, 1, 1)
+            INSERT INTO accounts (name, type, budget, is_active, needs_review)
+            VALUES (?, 'expense', 1, 1, 1)
             """,
             (name,),
         )

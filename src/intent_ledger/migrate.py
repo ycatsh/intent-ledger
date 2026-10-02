@@ -1,3 +1,4 @@
+import re
 import sqlite3
 from collections import Counter
 from datetime import UTC, datetime
@@ -5,7 +6,7 @@ from pathlib import Path
 
 from intent_ledger.accounting.ledger import rebuild_ledger
 from intent_ledger.accounting.rules import LEARNED_PRIORITY
-from intent_ledger.db import SCHEMA_VERSION, db, dict_factory, is_empty
+from intent_ledger.db import SCHEMA_PATH, SCHEMA_VERSION, db, dict_factory, is_empty
 from intent_ledger.importer.normalize import extract_payee_key
 
 SHOWN_CHANGES = 20
@@ -87,12 +88,70 @@ def _v4_ledger_groups_become_integers(conn):
     conn.execute("CREATE INDEX idx_ledger_group ON ledger(group_id)")
 
 
+REBUILT_IN_V5 = (
+    "accounts",
+    "account_rules",
+    "transfer_rules",
+    "transactions",
+    "transactions_overrides",
+    "transactions_splits",
+    "projects",
+    "budgets",
+    "subscriptions",
+)
+
+
+def _v5_roles_constraints_and_report_views(conn):
+    views = [row["name"] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'view'")]
+    for view in views:
+        conn.execute(f"DROP VIEW {view}")
+
+    for table in REBUILT_IN_V5:
+        _recreate(conn, table)
+
+    for role, name in (("unknown", "Unknown"), ("subscriptions", "Subscriptions")):
+        conn.execute("UPDATE accounts SET role = ? WHERE name = ? AND type = 'expense'", (role, name))
+
+    for statement in _schema_statements():
+        if statement.startswith("CREATE VIEW"):
+            conn.execute(statement)
+
+
 STEPS = (
     _v1_catch_up_older_databases,
     _v2_learned_rules_become_contains,
     _v3_subscription_charges_become_a_view,
     _v4_ledger_groups_become_integers,
+    _v5_roles_constraints_and_report_views,
 )
+
+
+def _schema_statements() -> list[str]:
+    return [statement.strip() for statement in SCHEMA_PATH.read_text().split(";\n") if statement.strip()]
+
+
+def _recreate(conn, table: str):
+    """Rebuild a table from its schema.sql definition, keeping the columns it still has.
+
+    The rename runs in legacy mode so foreign keys in other tables keep pointing at
+    the table's name rather than following it to the old copy.
+    """
+    statements = _schema_statements()
+    create = next(s for s in statements if s.startswith(f"CREATE TABLE IF NOT EXISTS {table} ("))
+    indexes = [s for s in statements if re.search(rf"INDEX .* ON {table}\s*\(", s)]
+    old_columns = [row["name"] for row in conn.execute(f"PRAGMA table_info({table})")]
+
+    conn.execute("PRAGMA legacy_alter_table = ON")
+    conn.execute(f"ALTER TABLE {table} RENAME TO {table}_old")
+    conn.execute("PRAGMA legacy_alter_table = OFF")
+    conn.execute(create)
+
+    new_columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+    columns = ", ".join(column for column in old_columns if column in new_columns)
+    conn.execute(f"INSERT INTO {table} ({columns}) SELECT {columns} FROM {table}_old")
+    conn.execute(f"DROP TABLE {table}_old")
+    for index in indexes:
+        conn.execute(index)
 
 
 def migrate(dry_run: bool = False) -> list[str]:

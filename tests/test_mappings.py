@@ -7,6 +7,7 @@ from intent_ledger.accounting.mappings import (
 )
 from intent_ledger.accounting.payees import get_or_create_payee
 from intent_ledger.accounting.repositories.accounts import AccountRepository
+from intent_ledger.accounting.rules import get_unknown_account_id
 
 
 def test_allowed_fields_match_live_schema(conn):
@@ -110,16 +111,9 @@ def test_changing_parent_to_a_different_type_is_rejected(conn, account_factory):
         )
 
 
-@pytest.mark.parametrize(
-    "change",
-    [
-        {"op": "update", "fields": {"name": "Uncategorized"}},
-        {"op": "update", "fields": {"type": "income"}},
-        {"op": "delete"},
-    ],
-)
+@pytest.mark.parametrize("change", [{"op": "update", "fields": {"type": "income"}}, {"op": "delete"}])
 @pytest.mark.parametrize("name", ["Unknown", "Subscriptions"])
-def test_built_in_accounts_cannot_be_renamed_retyped_or_deleted(conn, name, change):
+def test_built_in_accounts_cannot_be_retyped_or_deleted(conn, name, change):
     account_id = conn.execute("SELECT id FROM accounts WHERE name = ?", (name,)).fetchone()["id"]
 
     with pytest.raises(ValueError, match="built in"):
@@ -128,13 +122,17 @@ def test_built_in_accounts_cannot_be_renamed_retyped_or_deleted(conn, name, chan
     assert conn.execute("SELECT name FROM accounts WHERE id = ?", (account_id,)).fetchone()["name"] == name
 
 
-def test_built_in_accounts_can_still_be_edited_otherwise(conn):
-    account_id = conn.execute("SELECT id FROM accounts WHERE name = 'Unknown'").fetchone()["id"]
+def test_built_in_accounts_can_be_renamed_and_still_work(conn):
+    account_id = conn.execute("SELECT id FROM accounts WHERE role = 'unknown'").fetchone()["id"]
 
-    save_mappings([{"op": "update", "table": "accounts", "id": account_id, "fields": {"name": "Unknown"}}])
+    save_mappings(
+        [{"op": "update", "table": "accounts", "id": account_id, "fields": {"name": "Uncategorized"}}]
+    )
     save_mappings([{"op": "update", "table": "accounts", "id": account_id, "fields": {"budget": 1}}])
 
-    assert conn.execute("SELECT budget FROM accounts WHERE id = ?", (account_id,)).fetchone()["budget"] == 1
+    row = conn.execute("SELECT name, budget FROM accounts WHERE id = ?", (account_id,)).fetchone()
+    assert (row["name"], row["budget"]) == ("Uncategorized", 1)
+    assert get_unknown_account_id(conn) == account_id
 
 
 @pytest.mark.parametrize(

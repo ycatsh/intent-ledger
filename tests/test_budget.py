@@ -8,7 +8,6 @@ from intent_ledger.accounting.budget import (
     save_goal,
 )
 from intent_ledger.accounting.ledger import rebuild_ledger
-from intent_ledger.accounting.repositories.budget import BudgetRepository
 
 
 class FakeForm(MultiDict):
@@ -39,25 +38,6 @@ def set_budget(conn, account_id, period, amount_cents):
         (account_id, period, amount_cents),
     )
     conn.commit()
-
-
-def test_adjust_amount_cents_negative_delta_against_no_existing_row(conn, category):
-    account_id = category("Test Groceries")
-
-    BudgetRepository(conn).adjust_amount_cents(account_id, "2026-01-01", -500)
-    conn.commit()
-
-    assert BudgetRepository(conn).get_amount_cents(account_id, "2026-01-01") == -500
-
-
-def test_adjust_amount_cents_negative_delta_against_an_existing_row(conn, category):
-    account_id = category("Test Groceries")
-    set_budget(conn, account_id, "2026-01-01", 2000)
-
-    BudgetRepository(conn).adjust_amount_cents(account_id, "2026-01-01", -500)
-    conn.commit()
-
-    assert BudgetRepository(conn).get_amount_cents(account_id, "2026-01-01") == 1500
 
 
 def row_for(page, name):
@@ -212,22 +192,22 @@ def test_move_budget_transfers_between_categories(conn, category):
     assert row_for(page, "Dining")["by_period"]["2026-03-01"]["assigned"] == 100.0
 
 
-def test_move_budget_clamps_the_source_at_zero(conn, category):
+def test_moving_more_than_is_assigned_is_refused(conn, category):
     source = category("Test Groceries")
     destination = category("Dining")
     set_budget(conn, source, "2026-03-01", 10000)
 
-    moved = move_budget(
-        FakeForm({f"move_to_{source}": str(destination), f"move_amount_{source}": "500"}),
-        source,
-        "2026-03-01",
-    )
+    with pytest.raises(ValueError, match=r"Only 100\.00 is assigned"):
+        move_budget(
+            FakeForm({f"move_to_{source}": str(destination), f"move_amount_{source}": "500"}),
+            source,
+            "2026-03-01",
+        )
 
     page = get_budget_page(2026, 3)
 
-    assert moved == 100.0
-    assert row_for(page, "Test Groceries")["by_period"]["2026-03-01"]["assigned"] == 0.0
-    assert row_for(page, "Dining")["by_period"]["2026-03-01"]["assigned"] == 100.0
+    assert row_for(page, "Test Groceries")["by_period"]["2026-03-01"]["assigned"] == 100.0
+    assert row_for(page, "Dining")["by_period"]["2026-03-01"]["assigned"] == 0.0
 
 
 def test_move_budget_rejects_a_self_transfer(conn, category):

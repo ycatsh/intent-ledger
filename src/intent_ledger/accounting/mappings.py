@@ -156,7 +156,7 @@ def _account_rows(conn, types, order_by):
         f"""
         SELECT
             a.id, a.name, a.type, a.parent_account_id, a.institution,
-            a.account_number_last4, a.budget, a.is_active, a.needs_review,
+            a.account_number_last4, a.budget, a.is_active, a.needs_review, a.role,
             p.name AS parent_name, p.type AS parent_type
         FROM accounts a
         LEFT JOIN accounts p
@@ -253,17 +253,12 @@ def _apply_change(conn, change, id_map):
 
 
 def _protect_built_in_account(conn, account_id: int, op: str, fields: dict) -> None:
-    account = conn.execute(
-        "SELECT name, type, is_system FROM accounts WHERE id = ?", (account_id,)
-    ).fetchone()
-    if account is None or not account["is_system"]:
+    account = conn.execute("SELECT name, type, role FROM accounts WHERE id = ?", (account_id,)).fetchone()
+    if account is None or not account["role"]:
         return
 
-    renamed = "name" in fields and fields["name"] != account["name"]
-    retyped = "type" in fields and fields["type"] != account["type"]
-
-    if op == "delete" or renamed or retyped:
-        raise ValueError(f"{account['name']} is built in, so it can't be renamed, retyped, or deleted.")
+    if op == "delete" or ("type" in fields and fields["type"] != account["type"]):
+        raise ValueError(f"{account['name']} is built in, so it can't be retyped or deleted.")
 
 
 def _validate_account_hierarchy(conn, account_id, fields):

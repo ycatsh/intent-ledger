@@ -501,12 +501,11 @@ def move_budget(form, account_id: int, period: str):
 
         budget_repo = BudgetRepository(conn)
         available = budget_repo.get_amount_cents(account_id, period)
-        moved = min(amount.cents, max(available, 0))
+        if amount.cents > available:
+            raise ValueError(f"Only {Money(available)} is assigned to that category this month.")
 
-        if moved <= 0:
-            return 0.0
+        received = budget_repo.get_amount_cents(destination_id, period)
+        budget_repo.set_amount_cents(account_id, period, available - amount.cents)
+        budget_repo.set_amount_cents(destination_id, period, received + amount.cents)
 
-        for target_id, delta in ((account_id, -moved), (destination_id, moved)):
-            budget_repo.adjust_amount_cents(target_id, period, delta)
-
-    return Money(moved).amount
+    return amount.amount

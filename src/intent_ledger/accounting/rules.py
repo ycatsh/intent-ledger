@@ -84,7 +84,7 @@ def get_unknown_account_id(conn):
     row = conn.execute("""
         SELECT id
         FROM accounts
-        WHERE name='Unknown'
+        WHERE role = 'unknown'
     """).fetchone()
 
     if row is None:

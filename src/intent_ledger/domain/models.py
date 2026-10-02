@@ -20,7 +20,7 @@ class Account(_FieldAccessible):
     budget: bool
     is_active: bool
     needs_review: bool
-    is_system: bool = False
+    role: str | None = None
     parent_account_id: int | None = None
     institution: str | None = None
     account_number_last4: str | None = None
@@ -34,7 +34,7 @@ class Account(_FieldAccessible):
             budget=bool(row["budget"]),
             is_active=bool(row["is_active"]),
             needs_review=bool(row["needs_review"]),
-            is_system=bool(row["is_system"]),
+            role=row["role"],
             parent_account_id=row["parent_account_id"],
             institution=row["institution"],
             account_number_last4=row["account_number_last4"],

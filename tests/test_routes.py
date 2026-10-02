@@ -134,7 +134,7 @@ MALFORMED = {
             json_body(
                 lambda i: {
                     "changes": [
-                        {"op": "update", "table": "accounts", "id": i["unknown"], "fields": {"name": "Other"}}
+                        {"op": "update", "table": "accounts", "id": i["unknown"], "fields": {"type": "asset"}}
                     ]
                 }
             ),
