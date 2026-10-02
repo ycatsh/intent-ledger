@@ -1,11 +1,17 @@
+import atexit
 import os
+import shutil
+import tempfile
 
+os.environ["DATA_DIR"] = tempfile.mkdtemp(prefix="intent-ledger-tests-")
 os.environ.setdefault("SECRET_KEY", "test-secret-key")
 
 import pytest
 
 from intent_ledger.db import db
 from intent_ledger.importer.normalize import normalize_description
+
+atexit.register(shutil.rmtree, os.environ["DATA_DIR"], ignore_errors=True)
 
 
 @pytest.fixture

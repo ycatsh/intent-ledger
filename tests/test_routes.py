@@ -398,3 +398,7 @@ def test_forwarded_headers_are_trusted_only_when_configured(conn, monkeypatch):
     monkeypatch.setattr(config, "TRUSTED_PROXIES", 1)
 
     assert isinstance(create_app().wsgi_app, ProxyFix)
+
+
+def test_tests_never_touch_the_real_data_folder():
+    assert config.DATA_DIR != config.PROJECT_ROOT / "data"
