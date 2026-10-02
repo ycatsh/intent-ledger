@@ -158,17 +158,6 @@ Edit `static/css/input.css` to change styles. `app.css` is generated via Tailwin
 
 <br>
 
-## Troubleshooting
-
-**Pages feel slow.** intent-ledger builds a page in a few milliseconds, so the wait is almost always the network between you and the server. Check these in order:
-
-- Over Tailscale, run `tailscale ping <server>`. `via DERP(...)` means traffic goes through a relay, which adds 50 to 300 ms to every round trip and caps throughput. `via <ip>:<port>` means a direct connection.
-- If the server is on Wi-Fi, run `iw dev <interface> link`. A signal weaker than -70 dBm, or a low bitrate, limits everything the app sends.
-- Wi-Fi power saving delays requests that arrive while the server is idle. `iw dev <interface> get power_save` shows whether it's on.
-- A cable to the router fixes the last two at once.
-
-<br>
-
 ## Security
 
 See [docs/SECURITY.md](docs/SECURITY.md) for deployment, what's done with your data, and how to report a vulnerability.
