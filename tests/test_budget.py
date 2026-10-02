@@ -150,7 +150,51 @@ def test_goal_preset_spreads_the_remainder_over_months_left(conn, category):
     row = row_for(page, "Laptop")
 
     assert row["goal"]["target"] == 800.0
-    assert row["presets"]["goal"] == 200.0
+    assert row["presets"]["goal"] == 266.67
+
+
+def test_the_goal_suggestion_does_not_move_when_you_assign_it(conn, category):
+    laptop = category("Laptop")
+    save_goal(FakeForm({f"goal_amount_{laptop}": "900", f"goal_date_{laptop}": "2026-05-01"}), laptop)
+
+    before = row_for(get_budget_page(2026, 3), "Laptop")["presets"]["goal"]
+    set_budget(conn, laptop, "2026-03-01", 30000)
+    after = row_for(get_budget_page(2026, 3), "Laptop")["presets"]["goal"]
+
+    assert before == after == 300.0
+
+
+def test_spending_before_the_first_budget_shows_as_over(conn, category, account_factory, transaction_factory):
+    groceries = category("Test Groceries")
+    checking = account_factory("Test Checking")
+    conn.execute(
+        "INSERT INTO account_rules (match_type, pattern, account_id) VALUES ('contains', 'MARKET', ?)",
+        (groceries,),
+    )
+    transaction_factory(checking, "2026-01-10", -30000, "MARKET")
+    set_budget(conn, groceries, "2026-03-01", 10000)
+    rebuild_ledger()
+
+    row = row_for(get_budget_page(2026, 1), "Test Groceries")
+
+    assert row["rollover"] == -300.0
+    assert row["status_text"] == "Over by 300.00"
+
+
+def test_the_spending_average_only_counts_months_with_data(
+    conn, category, account_factory, transaction_factory
+):
+    groceries = category("Test Groceries")
+    checking = account_factory("Test Checking")
+    conn.execute(
+        "INSERT INTO account_rules (match_type, pattern, account_id) VALUES ('contains', 'MARKET', ?)",
+        (groceries,),
+    )
+    transaction_factory(checking, "2026-02-10", -30000, "MARKET")
+    transaction_factory(checking, "2026-02-12", 5000, "MARKET REFUND")
+    rebuild_ledger()
+
+    assert row_for(get_budget_page(2026, 3), "Test Groceries")["presets"]["avg3"] == 250.0
 
 
 def test_goal_without_a_date_suggests_the_whole_remainder(conn, category):
@@ -330,6 +374,19 @@ def test_save_action_persists_assigned_amounts(client, conn, category):
         (dining,),
     ).fetchone()
     assert row["amount_cents"] == 4250
+
+
+def test_saving_leaves_categories_missing_from_the_form_alone(client, conn, category):
+    dining = category("Test Dining")
+    rent = category("Test Rent")
+    set_budget(conn, rent, "2026-03-01", 90000)
+
+    client.post("/budget", data={"action": "save", f"budget_{dining}": "42.50"})
+
+    row = conn.execute(
+        "SELECT amount_cents FROM budgets WHERE account_id = ? AND period = '2026-03-01'", (rent,)
+    ).fetchone()
+    assert row["amount_cents"] == 90000
 
 
 def test_move_budget_action_moves_money(client, conn, category):

@@ -229,29 +229,6 @@ JOIN accounts a ON a.id = l.account_id
 JOIN transactions t ON t.id = l.group_id
 GROUP BY l.group_id;
 
-CREATE VIEW IF NOT EXISTS monthly_account_totals AS
-SELECT
-    l.account_id,
-    a.name AS account_name,
-    date(t.posted_date, 'start of month') AS period,
-    SUM(-l.amount_cents) AS spent
-FROM ledger l
-JOIN transactions t ON t.id = l.transaction_id
-JOIN accounts a ON a.id = l.account_id
-WHERE a.type = 'expense'
-GROUP BY l.account_id, a.name, period;
-
-CREATE VIEW IF NOT EXISTS monthly_income AS
-SELECT
-    date(t.posted_date, 'start of month') AS period,
-    SUM(CASE WHEN a.budget = 1 THEN l.amount_cents ELSE 0 END) AS income,
-    SUM(l.amount_cents) AS total_income
-FROM ledger l
-JOIN transactions t ON t.id = l.transaction_id
-JOIN accounts a ON a.id = l.account_id
-WHERE a.type = 'income'
-GROUP BY period;
-
 CREATE VIEW IF NOT EXISTS subscriptions_charges AS
 SELECT DISTINCT
     s.id AS subscription_id,

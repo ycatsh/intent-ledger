@@ -1,10 +1,11 @@
 from calendar import month_name, monthrange
+from collections import defaultdict
 from datetime import date
 
 from intent_ledger import forms
 from intent_ledger.accounting.repositories.budget import BudgetRepository
 from intent_ledger.db import db
-from intent_ledger.domain.money import Money
+from intent_ledger.domain.money import Money, scaled
 from intent_ledger.settings import today
 
 PRESET_MONTHS = 3
@@ -50,36 +51,26 @@ def get_budget_page(year: int, month: int):
             (UNGROUPED,),
         ).fetchall()
 
-        period_data = {period: _period_rows(conn, period) for period in {primary_period, *past_periods}}
-
-        rollover = _rollover_balances(conn, primary_period)
-        trend_data = _trend_rows(conn, trend_periods)
+        assigned_by_cat, spent_by_cat = _monthly_history(conn)
         goals = _goals(conn)
         recent = _recent_transactions(conn, primary_period)
+        month_totals = {
+            (row["account_type"], row["account_budget"]): row["amount_cents"]
+            for row in conn.execute(
+                """
+                SELECT account_type, account_budget, SUM(amount_cents) AS amount_cents
+                FROM income_expense_lines
+                WHERE period = ?
+                GROUP BY account_type, account_budget
+                """,
+                (primary_period,),
+            )
+        }
+        first_day = conn.execute("SELECT MIN(posted_date) AS day FROM transactions").fetchone()["day"]
 
-        income_row = conn.execute(
-            """
-            SELECT income FROM monthly_income WHERE period = ?
-        """,
-            (primary_period,),
-        ).fetchone()
-
-        unbudgeted = conn.execute(
-            """
-            SELECT COALESCE(SUM(l.amount_cents), 0) AS spent
-            FROM ledger l
-            JOIN transactions t ON t.id = l.transaction_id
-            JOIN accounts a ON a.id = l.account_id
-            WHERE a.type = 'expense'
-              AND a.budget = 0
-              AND l.amount_cents > 0
-              AND date(t.posted_date, 'start of month') = ?
-        """,
-            (primary_period,),
-        ).fetchone()["spent"]
-
-    budgetable_income = Money(-(income_row["income"] or 0)).amount if income_row else 0.0
-    unbudgeted_spending = Money(unbudgeted).amount
+    covered = [period for period in past_periods if first_day and period >= first_day[:8] + "01"]
+    income_cents = month_totals.get(("income", 1), 0)
+    unbudgeted_cents = month_totals.get(("expense", 0), 0)
 
     elapsed = _month_elapsed(year, month)
 
@@ -90,10 +81,11 @@ def get_budget_page(year: int, month: int):
     for cat in categories:
         cat_id = cat["id"]
         by_period = {}
+        cat_assigned = assigned_by_cat.get(cat_id, {})
+        cat_spent = spent_by_cat.get(cat_id, {})
         for period in periods:
-            data = period_data[period].get(cat_id, {"assigned": 0, "spent": 0})
-            assigned = data["assigned"]
-            spent = data["spent"]
+            assigned = cat_assigned.get(period, 0)
+            spent = cat_spent.get(period, 0)
             by_period[period] = {
                 "assigned": Money(assigned).amount,
                 "actual": Money(spent).amount,
@@ -102,16 +94,15 @@ def get_budget_page(year: int, month: int):
             totals_cents[period]["assigned"] += assigned
             totals_cents[period]["spent"] += spent
 
-        primary = period_data[primary_period].get(cat_id, {"assigned": 0, "spent": 0})
-        assigned_cents = primary["assigned"]
-        spent_cents = primary["spent"]
+        assigned_cents = cat_assigned.get(primary_period, 0)
+        spent_cents = cat_spent.get(primary_period, 0)
 
-        rollover_cents = rollover.get(cat_id, 0)
+        rollover_cents = envelope(cat_assigned, cat_spent, primary_period)
         carry_in_cents = rollover_cents - assigned_cents - spent_cents
         rollover_total_cents += rollover_cents
 
         goal = goals.get(cat_id)
-        pace = _pace(assigned_cents, spent_cents, elapsed)
+        pace = _pace(carry_in_cents + assigned_cents, spent_cents, elapsed)
         status = _status_key(assigned_cents, spent_cents, rollover_cents, pace)
 
         rows.append(
@@ -122,16 +113,16 @@ def get_budget_page(year: int, month: int):
                 "by_period": by_period,
                 "carry_in": Money(carry_in_cents).amount,
                 "rollover": Money(rollover_cents).amount,
-                "presets": _presets(cat_id, period_data, past_periods, goal, rollover_cents, primary_period),
+                "presets": _presets(
+                    cat_assigned, cat_spent, past_periods, covered, goal, carry_in_cents, primary_period
+                ),
                 "goal": goal,
                 "pace": pace,
                 "status_text": _status_text(status, rollover_cents),
                 "status_color": STATUS_COLOR[status],
                 "trend": {
                     "labels": [_short_label(period) for period in trend_periods],
-                    "amounts": [
-                        Money(-trend_data.get(cat_id, {}).get(period, 0)).amount for period in trend_periods
-                    ],
+                    "amounts": [Money(-cat_spent.get(period, 0)).amount for period in trend_periods],
                 },
                 "recent_transactions": recent.get(cat_id, []),
             }
@@ -170,9 +161,9 @@ def get_budget_page(year: int, month: int):
             for row in rows
             if row["by_period"][primary_period]["left"] < 0
         ],
-        "income": budgetable_income,
-        "unbudgeted_spending": unbudgeted_spending,
-        "to_budget": budgetable_income - totals[primary_period]["assigned"] - unbudgeted_spending,
+        "income": Money(income_cents).amount,
+        "unbudgeted_spending": Money(unbudgeted_cents).amount,
+        "to_budget": Money(income_cents - totals_cents[primary_period]["assigned"] - unbudgeted_cents).amount,
     }
 
 
@@ -181,81 +172,38 @@ def shift_year_month(year: int, month: int, delta: int):
     return total // 12, total % 12 + 1
 
 
-def _period_rows(conn, period: str):
-    rows = conn.execute(
-        """
-        SELECT
-            a.id AS account_id,
-            COALESCE(b.amount_cents, 0) AS assigned,
-            COALESCE(m.spent, 0) AS spent
-        FROM accounts a
-        LEFT JOIN budgets b
-            ON b.account_id = a.id AND b.period = ?
-        LEFT JOIN monthly_account_totals m
-            ON m.account_id = a.id AND m.period = ?
-        WHERE a.type = 'expense' AND a.budget = 1
-    """,
-        (period, period),
-    ).fetchall()
+def envelope(assigned: dict[str, int], spent: dict[str, int], period: str) -> int:
+    """Return what is left in a category's envelope at the end of `period`.
 
-    return {r["account_id"]: r for r in rows}
-
-
-def _rollover_balances(conn, period: str):
-    """Cumulative envelope balance for each category, from the first period
-    it was ever budgeted through the given period - budgeted amounts plus
-    net spend summed across that whole span, not just the current month.
+    Carry starts at the first month the category was ever budgeted. Before
+    that month, an envelope holds only that month's own activity.
     """
-    rows = conn.execute(
+    anchor = min(assigned, default=None)
+    if anchor is None or period < anchor:
+        return assigned.get(period, 0) + spent.get(period, 0)
+
+    return sum(cents for month, cents in assigned.items() if anchor <= month <= period) + sum(
+        cents for month, cents in spent.items() if anchor <= month <= period
+    )
+
+
+def _monthly_history(conn):
+    assigned = defaultdict(dict)
+    for row in conn.execute("SELECT account_id, period, amount_cents FROM budgets"):
+        assigned[row["account_id"]][row["period"]] = row["amount_cents"]
+
+    spent = defaultdict(dict)
+    for row in conn.execute(
         """
-        WITH bounds AS (
-            SELECT account_id, MIN(period) AS start_period
-            FROM budgets
-            GROUP BY account_id
-        )
-        SELECT
-            a.id AS account_id,
-            COALESCE((
-                SELECT SUM(b.amount_cents) FROM budgets b
-                WHERE b.account_id = a.id
-                  AND b.period >= bounds.start_period AND b.period <= ?
-            ), 0)
-            + COALESCE((
-                SELECT SUM(m.spent) FROM monthly_account_totals m
-                WHERE m.account_id = a.id
-                  AND m.period >= bounds.start_period AND m.period <= ?
-            ), 0) AS rollover
-        FROM accounts a
-        JOIN bounds ON bounds.account_id = a.id
-        WHERE a.type = 'expense' AND a.budget = 1
-    """,
-        (period, period),
-    ).fetchall()
+        SELECT account_id, period, SUM(amount_cents) AS amount_cents
+        FROM income_expense_lines
+        WHERE account_type = 'expense'
+        GROUP BY account_id, period
+        """
+    ):
+        spent[row["account_id"]][row["period"]] = -row["amount_cents"]
 
-    return {r["account_id"]: r["rollover"] for r in rows}
-
-
-def _trend_rows(conn, periods):
-    if not periods:
-        return {}
-
-    placeholders = ", ".join("?" for _ in periods)
-    rows = conn.execute(
-        f"""
-        SELECT m.account_id, m.period, m.spent
-        FROM monthly_account_totals m
-        JOIN accounts a ON a.id = m.account_id
-        WHERE a.type = 'expense' AND a.budget = 1
-          AND m.period IN ({placeholders})
-    """,
-        periods,
-    ).fetchall()
-
-    trend = {}
-    for row in rows:
-        trend.setdefault(row["account_id"], {})[row["period"]] = row["spent"]
-
-    return trend
+    return assigned, spent
 
 
 def _goals(conn):
@@ -268,6 +216,7 @@ def _goals(conn):
     return {
         r["account_id"]: {
             "target": Money(r["target_cents"]).amount,
+            "target_cents": r["target_cents"],
             "target_date": r["target_date"],
         }
         for r in rows
@@ -322,11 +271,11 @@ def _month_elapsed(year: int, month: int):
     return today_.day / monthrange(year, month)[1]
 
 
-def _pace(assigned_cents, spent_cents, elapsed):
-    if elapsed is None or assigned_cents <= 0:
+def _pace(available_cents, spent_cents, elapsed):
+    if elapsed is None or available_cents <= 0:
         return None
 
-    spent_fraction = -spent_cents / assigned_cents
+    spent_fraction = -spent_cents / available_cents
 
     return {
         "spent_fraction": spent_fraction,
@@ -373,43 +322,34 @@ def _status_text(status: str, rollover_cents):
     return _STATUS_TEXT[status]
 
 
-def _presets(cat_id, period_data, past_periods, goal, rollover_cents, primary_period):
-    past_spend = [
-        Money(-period_data[period].get(cat_id, {"spent": 0})["spent"]).amount for period in past_periods
-    ]
-    last = Money(period_data[past_periods[0]].get(cat_id, {"assigned": 0})["assigned"]).amount
-
+def _presets(assigned, spent, past_periods, covered, goal, carry_in_cents, primary_period):
+    past_spend_cents = sum(-spent.get(period, 0) for period in covered)
     presets = {
-        "last": last,
-        "avg3": sum(past_spend) / len(past_spend) if past_spend else 0.0,
+        "last": Money(assigned.get(past_periods[0], 0)).amount,
+        "avg3": Money(scaled(past_spend_cents, 1, len(covered)) if covered else 0).amount,
     }
 
-    suggestion = _goal_suggestion(goal, rollover_cents, primary_period)
-    if suggestion is not None:
-        presets["goal"] = suggestion
+    if goal:
+        presets["goal"] = _goal_suggestion(goal, carry_in_cents, primary_period)
 
     return presets
 
 
-def _goal_suggestion(goal, rollover_cents, primary_period):
-    if not goal:
-        return None
+def _goal_suggestion(goal, balance_cents, primary_period):
+    """Spread what the goal still needs, before this month's budget, over the months left.
 
-    remaining = goal["target"] - Money(rollover_cents).amount
-    if remaining <= 0:
+    The target month counts, so a goal for May set in March spreads over three months.
+    """
+    remaining_cents = goal["target_cents"] - balance_cents
+    if remaining_cents <= 0:
         return 0.0
-
     if not goal["target_date"]:
-        return round(remaining, 2)
+        return Money(remaining_cents).amount
 
     start = date.fromisoformat(primary_period)
     target = date.fromisoformat(goal["target_date"])
-    months_left = max(
-        (target.year * 12 + target.month) - (start.year * 12 + start.month) + 1,
-        1,
-    )
-
-    return round(remaining / months_left, 2)
+    months_left = max((target.year * 12 + target.month) - (start.year * 12 + start.month) + 1, 1)
+    return Money(scaled(remaining_cents, 1, months_left)).amount
 
 
 def _short_label(period: str) -> str:
@@ -457,6 +397,8 @@ def save_budget(form, period: str):
 
         budget_repo = BudgetRepository(conn)
         for cat in categories:
+            if f"budget_{cat['id']}" not in form:
+                continue
             amount = forms.optional_money(form, f"budget_{cat['id']}", "Every budget")
             if amount is not None and amount.cents < 0:
                 raise ValueError("Budgets can't be negative.")
