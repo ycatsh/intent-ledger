@@ -50,7 +50,7 @@ Everything lives under `src/intent_ledger/`.
 - **`accounting/repositories/`**: thin classes wrapping raw SQL per table (`AccountRepository`, `SplitRepository`, etc.). CRUD only: list/get, create, update, delete. No business logic here.
 - **`routes/`**: Flask blueprints. Kept thin: parse the request, call into `accounting/*`, render a template or redirect. Business logic does not belong in a route handler.
 - **`importer/`**: turns an uploaded bank statement into rows in `transactions`. `parsers/` holds one parser per input format (`canonical.py` is the built-in CSV/XLS/XLSX template; `base.py` defines the parser interface for bank-specific formats).
-- **`analytics/`**: reporting and exports: `reports.py`, `charts.py`, `workbook.py` (XLSX/CSV generation).
+- **`analytics/`**: reporting and exports: `reports.py`, `charts.py`, `workbook.py` (XLSX/CSV generation). Every report figure, chart, budget number, and export reads the `income_expense_lines` and `money_flows` views in `schema.sql`. Income and expenses are net of refunds. Don't sum ledger lines yourself in a page or export; add a function to `reports.py` instead, and prove it adds up to the summary in a test.
 - **`domain/`**: shared value types. `money.py` defines `Money`, an integer-cents type; **never use a `float` for a currency amount**, always go through `Money`. `models.py` holds other small shared types.
 - **`templates/`** + **`static/`**: Jinja templates and committed front-end assets (Tailwind-compiled CSS, vendored JS, fonts). See [Front-end](#front-end) below.
 - **`db.py`**: the `Database` wrapper (`db = Database()` singleton). `db.transaction()` is a context manager yielding a `sqlite3.Connection` with dict-row results; it takes the write lock up front (`BEGIN IMMEDIATE`), commits on success, and rolls back on exception. A nested `db.transaction()` joins the one already open, so the outermost block commits or rolls back everything. Most business-logic functions take a `conn` and are called from inside a `with db.transaction() as conn:` block one level up.
@@ -81,7 +81,8 @@ Read the resolution ladder in [intent_ledger/accounting/resolution.py](../src/in
 
 ## Code style & conventions
 
-- **Money**: always `intent_ledger.domain.money.Money` (integer cents). Never a bare `float` or `int` of dollars for a currency amount.
+- **Money**: always `intent_ledger.domain.money.Money` (integer cents). Never a bare `float` or `int` of dollars for a currency amount. Sum cents, convert with `.amount` only for display, and scale with `scaled()`, which rounds half a cent away from zero.
+- **Built-in accounts**: find Unknown and Subscriptions by `role`, never by name. They can be renamed but not retyped or deleted.
 - **Code organization**: keep each public function followed immediately by the private helpers it calls, in call order, so a file reads top-to-bottom like its call flow. Don't scatter helpers elsewhere in the file or bury them ahead of their caller. Bookkeeping that's secondary to a function's main purpose (e.g. snapshotting state just to compute a return value) goes below the main flow, not mixed into it. See `accounting/ledger.py` and `accounting/resolution.py` for the pattern.
 - **Repositories**: classes under `accounting/repositories/` follow the ordinary CRUD convention (list/get, then create, then update, then delete). Leave that structure as is rather than applying the rule above to them.
 - **Comments**: default to none. Only add one when the *why* is non-obvious: a hidden constraint, a workaround, or a subtle invariant. Don't add one that just restates what the code already says.

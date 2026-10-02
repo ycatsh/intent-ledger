@@ -22,7 +22,7 @@ The app makes no third party requests and works locally. Chart.js and both webfo
 
 - The SQLite database (`DATA_DIR`, default `./data/`) contains your real financial transactions. It is not encrypted at rest by this app. Use your host's disk encryption if that matters to you.
 - Never commit `data/` or your `.env` file. Both are gitignored by default; don't override that.
-- `fixtures/sample_statements/` contains only synthetic data. They are safe to import and safe to delete.
+- `fixtures/` contains only synthetic statements. They are safe to import and safe to delete.
 
 <br>
 

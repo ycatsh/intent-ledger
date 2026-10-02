@@ -22,9 +22,10 @@ The usual accounting reports are there too: balance sheets, cashflows, and other
 - Bank-agnostic import via a [canonical CSV/XLS/XLSX template](docs/canonical-template.md), with a pluggable parser interface for bank-specific formats
   ([docs/adding-a-parser.md](docs/adding-a-parser.md))
 - Hungarian algorithm to detect transfers between accounts in the uploaded bank statements.
-- Envelope budgeting, expense reports, recurring-payment/subscription tracking,
+- Envelope budgeting with month-to-month comparison, expense reports, recurring-payment/subscription tracking,
   and cost-center projects
-- Formatted XLSX/CSV exports: per-account statements (balance sheet, cashflow, categorized transactions), per-project reports, and yearly reports
+- Income and expenses are net: refunds and reversals reduce them, and transfers between your own accounts never count as income or spending
+- Formatted XLSX/CSV exports: per-account statements, monthly and yearly income and expense reports, per-project reports, and a balance sheet with equity and counter-party memos
 
 ### Resolution Ladder
 
