@@ -317,6 +317,12 @@
             {% endfor %}
           </tbody>
         </table>
+        {% if total > transactions | length %}
+        <div class="flex items-center justify-between px-3 py-2 text-xs text-text-secondary">
+          <span>Showing {{ transactions | length }} of {{ total }}</span>
+          <a class="underline underline-offset-2" href="{{ url_for('accounts.accounts', account_id=selected_account_id, search=filters.search, sort=filters.sort, limit=limit * 2) }}">Show more</a>
+        </div>
+        {% endif %}
       </div>
     </div>
     {% endset %}

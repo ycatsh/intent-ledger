@@ -235,7 +235,67 @@ def get_ledger_entries(account_id: int | None, search=None, sort="date_desc", li
 
     WHERE l.account_id = ?
     """
-    params = [account_id]
+    conditions, condition_params = _entry_conditions(text, filters)
+    sql += conditions
+    params = [account_id, *condition_params]
+
+    order_map = {
+        "date_desc": "t.posted_date DESC, l.id DESC",
+        "date_asc": "t.posted_date ASC, l.id ASC",
+        "amount_desc": "l.amount_cents DESC",
+        "amount_asc": "l.amount_cents ASC",
+        "payee": "m.canonical_name ASC",
+        "category": "category ASC",
+    }
+
+    sql += f"""
+        GROUP BY l.id
+        ORDER BY
+            {order_map.get(sort, order_map["date_desc"])}
+    """
+
+    if limit is not None:
+        sql += " LIMIT ?"
+        params.append(limit)
+
+    with db.transaction() as conn:
+        rows = conn.execute(sql, params).fetchall()
+        _attach_splits(conn, rows, exclude_account_id=account_id)
+
+    return rows
+
+
+def get_running_balances(conn, account_id: int) -> dict[str, int]:
+    rows = conn.execute(
+        """
+        SELECT transaction_hash, balance_cents
+        FROM ledger_running_balance
+        WHERE account_id = ?
+        ORDER BY ledger_id
+        """,
+        (account_id,),
+    )
+    return {row["transaction_hash"]: row["balance_cents"] for row in rows}
+
+
+def count_ledger_entries(account_id: int, search=None) -> int:
+    conditions, params = _entry_conditions(*parse_search(search))
+    with db.transaction() as conn:
+        return conn.execute(
+            f"""
+            SELECT COUNT(*) AS n
+            FROM ledger l
+            JOIN transactions t ON t.id = l.transaction_id
+            LEFT JOIN payees m ON m.id = t.payee_id
+            WHERE l.account_id = ? {conditions}
+            """,
+            [account_id, *params],
+        ).fetchone()["n"]
+
+
+def _entry_conditions(text, filters) -> tuple[str, list]:
+    sql = ""
+    params = []
 
     if text:
         sql += """
@@ -278,43 +338,7 @@ def get_ledger_entries(account_id: int | None, search=None, sort="date_desc", li
             sql += f" AND t.posted_date {SQL_OPS[f.op]} ?"
             params.append(f.value)
 
-    order_map = {
-        "date_desc": "t.posted_date DESC, l.id DESC",
-        "date_asc": "t.posted_date ASC, l.id ASC",
-        "amount_desc": "l.amount_cents DESC",
-        "amount_asc": "l.amount_cents ASC",
-        "payee": "m.canonical_name ASC",
-        "category": "category ASC",
-    }
-
-    sql += f"""
-        GROUP BY l.id
-        ORDER BY
-            {order_map.get(sort, order_map["date_desc"])}
-    """
-
-    if limit is not None:
-        sql += " LIMIT ?"
-        params.append(limit)
-
-    with db.transaction() as conn:
-        rows = conn.execute(sql, params).fetchall()
-        _attach_splits(conn, rows, exclude_account_id=account_id)
-
-    return rows
-
-
-def get_running_balances(conn, account_id: int) -> dict[str, int]:
-    rows = conn.execute(
-        """
-        SELECT transaction_hash, balance_cents
-        FROM ledger_running_balance
-        WHERE account_id = ?
-        ORDER BY ledger_id
-        """,
-        (account_id,),
-    )
-    return {row["transaction_hash"]: row["balance_cents"] for row in rows}
+    return sql, params
 
 
 def _attach_splits(conn, rows, exclude_account_id=None):

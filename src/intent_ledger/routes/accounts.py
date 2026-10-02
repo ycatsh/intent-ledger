@@ -2,6 +2,7 @@ from flask import Blueprint, abort, flash, redirect, render_template, request, u
 
 from intent_ledger import forms
 from intent_ledger.accounting.accounts import (
+    count_ledger_entries,
     create_account,
     get_account_view_page,
     get_active_accounts,
@@ -28,6 +29,8 @@ from intent_ledger.service import ledger_change
 from intent_ledger.settings import today
 
 accounts_bp = Blueprint("accounts", __name__)
+
+PAGE_SIZE = 200
 
 
 def _redirect_to_ledger_view():
@@ -57,6 +60,7 @@ def accounts():
     has_explicit_account = account_id is not None
     search = request.args.get("search", "")
     sort = request.args.get("sort")
+    limit = max(1, min(request.args.get("limit", PAGE_SIZE, type=int), 5000))
 
     active_accounts = get_active_accounts()
 
@@ -70,7 +74,9 @@ def accounts():
         selected_account_id=account_id,
         has_explicit_account=has_explicit_account,
         payees=get_all_payees(),
-        transactions=get_ledger_entries(account_id, search=search, sort=sort),
+        transactions=get_ledger_entries(account_id, search=search, sort=sort, limit=limit),
+        total=count_ledger_entries(account_id, search=search) if account_id is not None else 0,
+        limit=limit,
         projects=get_all_projects(),
         counterparties=get_all_counterparties(),
         filters={"search": search, "sort": sort},

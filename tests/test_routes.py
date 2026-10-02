@@ -4,6 +4,7 @@ import pytest
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from intent_ledger import config, create_app, service
+from intent_ledger.accounting.accounts import count_ledger_entries, get_ledger_entries
 from intent_ledger.accounting.ledger import rebuild_ledger
 from intent_ledger.db import db
 from intent_ledger.importer import uploads
@@ -477,3 +478,30 @@ def test_a_malformed_month_is_not_found(client):
 
 def test_negative_zero_prints_without_a_sign(client):
     assert client.application.jinja_env.filters["money"](-0.0) == "0.00"
+
+
+def test_a_long_account_ledger_shows_a_page_and_a_link_to_more(
+    client, conn, account_factory, transaction_factory
+):
+    checking = account_factory("Test Bank")
+    for day in range(1, 4):
+        transaction_factory(checking, f"2026-01-0{day}", -100 * day, f"SHOP {day}")
+    rebuild_ledger()
+
+    page = client.get(f"/accounts?account_id={checking}&limit=2").get_data(as_text=True)
+
+    assert "Showing 2 of 3" in page
+    assert "limit=4" in page
+    assert "Showing" not in client.get(f"/accounts?account_id={checking}").get_data(as_text=True)
+
+
+def test_the_count_matches_the_listing(conn, account_factory, transaction_factory):
+    checking = account_factory("Test Bank")
+    for day in range(1, 4):
+        transaction_factory(checking, f"2026-01-0{day}", -100 * day, f"SHOP {day}")
+    rebuild_ledger()
+
+    for search in (None, "shop", "amount>1.50", "date>=02/01/2026 shop"):
+        assert count_ledger_entries(checking, search=search) == len(
+            get_ledger_entries(checking, search=search)
+        )
