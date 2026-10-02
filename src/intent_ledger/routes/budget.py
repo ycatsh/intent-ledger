@@ -1,9 +1,10 @@
 from datetime import date
 
-from flask import Blueprint, flash, redirect, render_template, request, url_for
+from flask import Blueprint, flash, redirect, render_template, request, session, url_for
 
 from intent_ledger import forms
 from intent_ledger.accounting.budget import (
+    PRESET_MONTHS,
     STATUS_HEX,
     delete_goal,
     get_budget_page,
@@ -22,7 +23,7 @@ def budget():
 
     return render_template(
         "budget.html",
-        budget=get_budget_page(year, month),
+        budget=get_budget_page(year, month, session.get("budget_compare", [])),
         nav=period_links("budget.budget", year, month),
         status_hex=STATUS_HEX,
     )
@@ -43,7 +44,15 @@ def budget_post():
 
 
 def _apply_action(action: str, target: str, primary_period: str) -> None:
-    if action == "save":
+    if action == "compare":
+        offset = forms.whole_number(target, "month")
+        if offset not in range(1, PRESET_MONTHS + 1):
+            raise ValueError("Choose a valid month to compare.")
+        offsets = session.get("budget_compare", [])
+        session["budget_compare"] = (
+            [o for o in offsets if o != offset] if offset in offsets else [*offsets, offset]
+        )
+    elif action == "save":
         save_budget(request.form, primary_period)
         flash("Budget saved.", "success")
     elif action == "save_goal":

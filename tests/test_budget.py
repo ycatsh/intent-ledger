@@ -456,3 +456,27 @@ def test_a_malformed_budget_is_rejected_not_saved_as_zero(client, conn, category
 
 def test_a_malformed_budget_action_is_a_message_not_a_crash(client):
     assert client.post("/budget", data={"action": "delete_goal:abc"}).status_code == 302
+
+
+def test_compared_months_show_their_own_figures(client, conn, category):
+    groceries = category("Test Groceries")
+    set_budget(conn, groceries, "2026-01-01", 12300)
+
+    with client.session_transaction() as session:
+        session["finance_year"] = 2026
+        session["finance_month"] = 3
+    client.post("/budget", data={"action": "compare:2"})
+    page = client.get("/budget").get_data(as_text=True)
+
+    assert get_budget_page(2026, 3, [2])["periods"][1]["period"] == "2026-01-01"
+    assert "Jan assigned" in page
+    assert "123.00" in page
+
+    client.post("/budget", data={"action": "compare:2"})
+    assert "Jan assigned" not in client.get("/budget").get_data(as_text=True)
+
+
+def test_comparing_an_unknown_month_is_a_message(client):
+    response = client.post("/budget", data={"action": "compare:9"})
+
+    assert response.status_code == 302

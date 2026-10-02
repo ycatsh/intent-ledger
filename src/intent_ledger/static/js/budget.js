@@ -7,15 +7,16 @@ if (form) {
 
   function number(value) {
     const parsed = parseFloat(value);
-    return Number.isFinite(parsed) ? parsed : 0;
+    return Number.isFinite(parsed) ? Math.round(parsed * 100) : 0;
   }
 
-  function setAmount(el, value) {
+  function setAmount(el, cents) {
     if (!el) return;
-    el.dataset.value = value.toFixed(2);
-    el.textContent = value.toFixed(2);
-    el.classList.toggle("amount-negative", value < 0);
-    el.classList.toggle("amount-positive", value >= 0);
+    const text = (cents / 100).toFixed(2);
+    el.dataset.value = text;
+    el.textContent = text;
+    el.classList.toggle("amount-negative", cents < 0);
+    el.classList.toggle("amount-positive", cents >= 0);
   }
 
   const assignedAtLoad = inputs.reduce((sum, input) => sum + number(input.dataset.assigned), 0);

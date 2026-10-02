@@ -21,7 +21,7 @@ STATUS_HEX = {
 UNGROUPED = "Ungrouped"
 
 
-def get_budget_page(year: int, month: int):
+def get_budget_page(year: int, month: int, compare_offsets=()):
     primary_period = date(year, month, 1).isoformat()
 
     past_periods = []
@@ -29,7 +29,7 @@ def get_budget_page(year: int, month: int):
         y, m = shift_year_month(year, month, -offset)
         past_periods.append(date(y, m, 1).isoformat())
 
-    periods = [primary_period]
+    periods = [primary_period, *(past_periods[offset - 1] for offset in sorted(compare_offsets))]
 
     trend_periods = []
     for offset in range(TREND_MONTHS - 1, -1, -1):
@@ -90,6 +90,7 @@ def get_budget_page(year: int, month: int):
                 "assigned": Money(assigned).amount,
                 "actual": Money(spent).amount,
                 "left": Money(assigned + spent).amount,
+                "cents": (assigned, spent),
             }
             totals_cents[period]["assigned"] += assigned
             totals_cents[period]["spent"] += spent
@@ -139,6 +140,10 @@ def get_budget_page(year: int, month: int):
 
     return {
         "primary_period": primary_period,
+        "compare_options": [
+            {"offset": offset, "label": _period_label(period), "active": offset in compare_offsets}
+            for offset, period in enumerate(past_periods, start=1)
+        ],
         "periods": [
             {
                 "period": period,
@@ -368,23 +373,23 @@ def _group_rows(rows, periods):
     for row in rows:
         group = groups.setdefault(
             row["group_name"],
-            {
-                "name": row["group_name"],
-                "row_ids": [],
-                "by_period": {period: {"assigned": 0.0, "actual": 0.0, "left": 0.0} for period in periods},
-                "carry_in": 0.0,
-            },
+            {"name": row["group_name"], "row_ids": [], "cents": {period: [0, 0] for period in periods}},
         )
-
         group["row_ids"].append(row["id"])
-        group["carry_in"] += row["carry_in"]
-
         for period in periods:
-            cell = row["by_period"][period]
-            subtotal = group["by_period"][period]
-            subtotal["assigned"] += cell["assigned"]
-            subtotal["actual"] += cell["actual"]
-            subtotal["left"] += cell["left"]
+            assigned, spent = row["by_period"][period]["cents"]
+            group["cents"][period][0] += assigned
+            group["cents"][period][1] += spent
+
+    for group in groups.values():
+        group["by_period"] = {
+            period: {
+                "assigned": Money(assigned).amount,
+                "actual": Money(spent).amount,
+                "left": Money(assigned + spent).amount,
+            }
+            for period, (assigned, spent) in group.pop("cents").items()
+        }
 
     return list(groups.values())
 

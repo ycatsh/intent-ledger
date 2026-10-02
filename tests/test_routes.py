@@ -473,3 +473,7 @@ def test_month_links_move_both_budget_and_expenses(client, ids):
 
 def test_a_malformed_month_is_not_found(client):
     assert client.get("/budget?month=2026-13").status_code == 404
+
+
+def test_negative_zero_prints_without_a_sign(client):
+    assert client.application.jinja_env.filters["money"](-0.0) == "0.00"

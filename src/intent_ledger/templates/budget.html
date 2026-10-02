@@ -3,7 +3,8 @@
 {% block title %}Intent: Budget{% endblock %}
 
 {% set primary = budget.primary_period %}
-{% set column_count = 4 %}
+{% set compared = budget.periods[1:] %}
+{% set column_count = 4 + 2 * compared | length %}
 
 {% macro total_span(key, value) %}
 <span class="mono" data-total="{{ key }}" data-value="{{ '%.2f'|format(value) }}">{{ value|money }}</span>
@@ -19,6 +20,11 @@
   {% set controls %}
     <div class="flex flex-wrap items-center gap-1">
       {{ period_picker(budget.periods[0].label, nav) }}
+      {% for option in budget.compare_options %}
+      <button type="submit" form="budget-form" name="action" value="compare:{{ option.offset }}"
+        class="btn btn-ghost {{ 'text-accent' if option.active else '' }}" aria-pressed="{{ 'true' if option.active else 'false' }}"
+        title="Compare with {{ option.label }}">{{ option.label[:3] }}</button>
+      {% endfor %}
       <select class="input w-36" data-bulk-fill aria-label="Fill all categories">
         <option value="">Fill all&hellip;</option>
         <option value="last">Last month</option>
@@ -74,6 +80,10 @@
             <th class="text-right">Assigned</th>
             <th class="text-right">Spent</th>
             <th class="text-right">Left</th>
+            {% for p in compared %}
+            <th class="text-right text-text-secondary">{{ p.label[:3] }} assigned</th>
+            <th class="text-right text-text-secondary">{{ p.label[:3] }} spent</th>
+            {% endfor %}
           </tr>
         </thead>
         <tbody>
@@ -84,6 +94,10 @@
               <td class="text-right">{{ group.by_period[primary].assigned|money }}</td>
               <td class="text-right">{{ (-group.by_period[primary].actual)|money }}</td>
               <td class="text-right">{{ group.by_period[primary].left|money }}</td>
+              {% for p in compared %}
+              <td class="text-right">{{ group.by_period[p.period].assigned|money }}</td>
+              <td class="text-right">{{ (-group.by_period[p.period].actual)|money }}</td>
+              {% endfor %}
             </tr>
             {% endif %}
 
@@ -120,6 +134,10 @@
                   {{ row.rollover|money }}
                 </span>
               </td>
+              {% for p in compared %}
+              <td class="text-right mono text-text-secondary">{{ row.by_period[p.period].assigned|money }}</td>
+              <td class="text-right mono text-text-secondary">{{ (-row.by_period[p.period].actual)|money }}</td>
+              {% endfor %}
             </tr>
             {% endfor %}
           {% else %}
@@ -137,6 +155,10 @@
             <td class="text-right">{{ total_span("assigned", budget.totals[primary].assigned) }}</td>
             <td class="text-right">{{ total_span("actual", -budget.totals[primary].actual) }}</td>
             <td class="text-right">{{ total_span("rollover", budget.rollover_total) }}</td>
+            {% for p in compared %}
+            <td class="text-right mono">{{ budget.totals[p.period].assigned|money }}</td>
+            <td class="text-right mono">{{ (-budget.totals[p.period].actual)|money }}</td>
+            {% endfor %}
           </tr>
         </tfoot>
         {% endif %}

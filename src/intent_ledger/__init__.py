@@ -134,4 +134,4 @@ def register_template_filters(app: Flask) -> None:
     def money_filter(value):
         if value is None:
             return "-"
-        return f"{value:,.2f}"
+        return f"{value + 0:,.2f}"
