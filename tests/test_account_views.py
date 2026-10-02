@@ -7,9 +7,11 @@ easily break the other - and neither is reachable from a plain index page.
 import pytest
 from test_rules_overrides import FakeForm
 
-from intent_ledger.accounting.accounts import get_account_view_page, get_payee_view_page
+from intent_ledger.accounting.accounts import get_account_view_page, get_active_accounts, get_payee_view_page
+from intent_ledger.accounting.budget import shift_year_month
 from intent_ledger.accounting.ledger import rebuild_ledger
 from intent_ledger.accounting.rules_overrides import save_split
+from intent_ledger.settings import today
 
 
 @pytest.fixture
@@ -79,3 +81,35 @@ def test_profile_pages_carry_split_legs(split_transaction, view):
     assert txn["has_split"]
     assert {s["note"] for s in txn["splits"]} == {"food", "treat"}
     assert len(txn["splits"]) == 2
+
+
+def test_views_average_the_net_of_the_last_twelve_months(conn, account_factory, transaction_factory):
+    checking = account_factory("Test Checking")
+    food = account_factory("Test Food", type="expense")
+    shop = conn.execute(
+        "INSERT INTO payees (canonical_name, normalized_name, account_id) VALUES ('Shop', 'shop', ?)", (food,)
+    ).lastrowid
+    today_ = today()
+    for back in range(36):
+        year, month = shift_year_month(today_.year, today_.month, -back)
+        transaction_factory(checking, f"{year}-{month:02d}-01", -100000, "SHOP")
+    conn.execute("UPDATE transactions SET payee_id = ?", (shop,))
+    conn.commit()
+    rebuild_ledger()
+
+    assert get_account_view_page(food)["account"]["avg_month"] == -1000.0
+    assert get_payee_view_page(shop)["account"]["avg_month"] == -1000.0
+
+
+def test_net_worth_keeps_an_inactive_account_that_still_holds_money(
+    conn, account_factory, transaction_factory
+):
+    closed = account_factory("Old Bank", is_active=0)
+    account_factory("Empty Bank", is_active=0)
+    transaction_factory(closed, "2026-01-01", 5000, "DEPOSIT")
+    rebuild_ledger()
+
+    balances = {a["name"]: a["balance"] for a in get_active_accounts()}
+
+    assert balances["Old Bank"] == 50.0
+    assert "Empty Bank" not in balances

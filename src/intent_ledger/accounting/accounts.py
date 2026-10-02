@@ -7,13 +7,14 @@ from intent_ledger.accounting.repositories.accounts import AccountRepository
 from intent_ledger.accounting.repositories.payees import PayeeRepository
 from intent_ledger.db import db
 from intent_ledger.domain.models import Account, Payee
-from intent_ledger.domain.money import MIRRORED_TYPES, Money
+from intent_ledger.domain.money import MIRRORED_TYPES, Money, scaled
 from intent_ledger.settings import today, today_in
 
 
 def get_active_accounts():
     return _rows(
-        "WHERE a.is_active = 1 AND (a.type = 'asset' or a.type = 'equity' or a.type = 'liability')", []
+        "WHERE a.type IN ('asset', 'equity', 'liability')",
+        having="a.is_active = 1 OR COALESCE(SUM(l.amount_cents), 0) != 0",
     )
 
 
@@ -61,9 +62,9 @@ def get_account(account_id: int):
     return rows[0] if rows else None
 
 
-def _rows(where="", params=()):
+def _rows(where="", params=(), having=None):
     with db.transaction() as conn:
-        return conn.execute(
+        rows = conn.execute(
             f"""
             SELECT
                 a.id,
@@ -73,19 +74,23 @@ def _rows(where="", params=()):
                 a.type,
                 a.budget,
                 a.default_parser_slug,
-                COALESCE(SUM(l.amount_cents), 0) / 100.0 balance,
+                COALESCE(SUM(l.amount_cents), 0) AS balance_cents,
                 COUNT(l.id) transactions
             FROM accounts a
             LEFT JOIN ledger l
                 ON l.account_id = a.id
-            LEFT JOIN transactions t
-                ON t.id = l.transaction_id
             {where}
             GROUP BY a.id
+            {f"HAVING {having}" if having else ""}
             ORDER BY a.id ASC
             """,
             params,
         ).fetchall()
+
+    for row in rows:
+        row["balance"] = Money(row["balance_cents"]).amount
+
+    return rows
 
 
 def get_all_payees() -> list[Payee]:
@@ -146,7 +151,7 @@ def parse_search(search: str | None) -> tuple[list[str], list[Filter]]:
 
         if field == "amount":
             try:
-                value = float(value)
+                value = abs(Money.parse(value).cents)
             except ValueError:
                 continue
 
@@ -197,7 +202,7 @@ def get_ledger_entries(account_id: int | None, search=None, sort="date_desc", li
         {_OTHER_LEG_COLUMNS}
         m.id AS payee_id,
         COALESCE(m.canonical_name, t.raw_description) AS payee,
-        l.amount_cents / 100.0 AS amount,
+        l.amount_cents,
         t.note AS note,
         ov.id AS override_id,
         EXISTS (
@@ -245,7 +250,7 @@ def get_ledger_entries(account_id: int | None, search=None, sort="date_desc", li
             OR CAST(l.amount_cents/100.0 AS TEXT) LIKE ?
         )
         """
-        q = f"%{search.lower()}%"
+        q = f"%{' '.join(text).lower()}%"
         params.extend([q, q, q, q])
 
     for f in filters:
@@ -265,7 +270,7 @@ def get_ledger_entries(account_id: int | None, search=None, sort="date_desc", li
             params.append(f"%{f.value.lower()}%")
 
         elif f.field == "amount":
-            sql += f" AND ABS(l.amount_cents)/100.0 {SQL_OPS[f.op]} ?"
+            sql += f" AND ABS(l.amount_cents) {SQL_OPS[f.op]} ?"
             params.append(f.value)
 
         elif f.field == "date":
@@ -304,6 +309,7 @@ def _attach_splits(conn, rows, exclude_account_id=None):
 
     for row in rows:
         row["splits"] = by_hash.get(row["transaction_hash"], [])
+        row["amount"] = Money(row["amount_cents"]).amount
 
     return rows
 
@@ -366,7 +372,7 @@ def get_payee_transactions(payee_id: int, sort="date_desc"):
         {_OTHER_LEG_COLUMNS}
         m.id AS payee_id,
         COALESCE(m.canonical_name, t.raw_description) AS payee,
-        t.amount_cents / 100.0 AS amount,
+        t.amount_cents,
         t.note AS note,
         ov.id AS override_id,
         EXISTS (
@@ -433,10 +439,14 @@ def get_account_view_page(account_id: int):
             return None
 
         today_ = today_in(conn)
-        twelve_months_ago = _start_of_month_shifted(today_, -12)
+        account_type = account_row["type"]
+        sign = -1 if account_type in MIRRORED_TYPES else 1
+        size = {"expense": "l.amount_cents", "income": "-l.amount_cents"}.get(
+            account_type, "ABS(l.amount_cents)"
+        )
 
         stats = conn.execute(
-            """
+            f"""
             SELECT
                 COUNT(*) AS tx_count,
                 MIN(t.posted_date) AS first_seen,
@@ -446,24 +456,24 @@ def get_account_view_page(account_id: int):
                 COALESCE(SUM(CASE WHEN l.amount_cents > 0 THEN 1 ELSE 0 END), 0) AS positive_count,
                 COALESCE(SUM(CASE WHEN l.amount_cents < 0 THEN -l.amount_cents END), 0) AS negative_cents,
                 COALESCE(SUM(CASE WHEN l.amount_cents < 0 THEN 1 ELSE 0 END), 0) AS negative_count,
-                COALESCE(MIN(CASE WHEN l.amount_cents > 0 THEN l.amount_cents END), 0) AS typical_min_cents,
-                COALESCE(MAX(CASE WHEN l.amount_cents > 0 THEN l.amount_cents END), 0) AS typical_max_cents
+                COALESCE(MIN(CASE WHEN {size} > 0 THEN {size} END), 0) AS typical_min_cents,
+                COALESCE(MAX(CASE WHEN {size} > 0 THEN {size} END), 0) AS typical_max_cents
             FROM ledger l
             JOIN transactions t ON t.id = l.transaction_id
             WHERE l.account_id = ?
-        """,
+            """,
             (account_id,),
         ).fetchone()
 
         largest = conn.execute(
-            """
-            SELECT l.amount_cents AS amount_cents, t.posted_date AS posted_date
+            f"""
+            SELECT {size} AS amount_cents, t.posted_date AS posted_date
             FROM ledger l
             JOIN transactions t ON t.id = l.transaction_id
-            WHERE l.account_id = ? AND l.amount_cents > 0
-            ORDER BY l.amount_cents DESC
+            WHERE l.account_id = ? AND {size} > 0
+            ORDER BY {size} DESC, t.posted_date DESC
             LIMIT 1
-        """,
+            """,
             (account_id,),
         ).fetchone()
 
@@ -476,10 +486,10 @@ def get_account_view_page(account_id: int):
             FROM ledger l
             JOIN transactions t ON t.id = l.transaction_id
             WHERE l.account_id = ?
-              AND t.posted_date >= ?
+              AND t.posted_date >= date(?, '-11 months', 'start of month')
             GROUP BY period
-        """,
-            (account_id, twelve_months_ago.isoformat()),
+            """,
+            (account_id, today_.isoformat()),
         ).fetchall()
 
         recent = get_ledger_entries(account_id, sort="date_desc", limit=25)
@@ -487,10 +497,8 @@ def get_account_view_page(account_id: int):
     first_seen = _parse_date(stats["first_seen"])
     last_seen = _parse_date(stats["last_seen"])
     months_active = _months_between(first_seen, today_) if first_seen else 1
-
-    account_type = account_row["type"]
-    sign = -1 if account_type in MIRRORED_TYPES else 1
     in_key, out_key = ("positive", "negative") if sign > 0 else ("negative", "positive")
+    net_12_cents = sum(row["positive_cents"] - row["negative_cents"] for row in monthly)
 
     account = {
         "name": account_row["name"],
@@ -501,13 +509,12 @@ def get_account_view_page(account_id: int):
         "last_seen": stats["last_seen"] or "",
         "last_seen_short": _short_date(last_seen),
         "days_since": (today_ - last_seen).days if last_seen else 0,
-        "net": Money(stats["net_cents"]).signed_for_display(account_type).amount,
+        "net": Money(sign * stats["net_cents"]).amount,
         "in_total": Money(stats[f"{in_key}_cents"]).amount,
         "in_count": stats[f"{in_key}_count"],
         "out_total": Money(stats[f"{out_key}_cents"]).amount,
         "out_count": stats[f"{out_key}_count"],
-        "avg_month": Money(stats["positive_cents"]).amount / min(max(months_active, 1), 12),
-        "cadence": None,
+        "avg_month": Money(sign * scaled(net_12_cents, 1, min(months_active, 12))).amount,
         "typical_min": Money(stats["typical_min_cents"]).amount,
         "typical_max": Money(stats["typical_max_cents"]).amount,
         "largest": Money(largest["amount_cents"]).amount if largest else 0,
@@ -516,15 +523,14 @@ def get_account_view_page(account_id: int):
 
     monthly_by_period = {row["period"]: row for row in monthly}
     periods = _last_12_month_periods(today_)
-
-    in_series = []
-    out_series = []
-    for period in periods:
-        row = monthly_by_period.get(period)
-        in_series.append(round(Money(row[f"{in_key}_cents"] if row else 0).amount, 2))
-        out_series.append(round(Money(-(row[f"{out_key}_cents"] if row else 0)).amount, 2))
-
-    charts = _monthly_flow_chart(periods, in_series, out_series)
+    in_series = [
+        Money(monthly_by_period[p][f"{in_key}_cents"] if p in monthly_by_period else 0).amount
+        for p in periods
+    ]
+    out_series = [
+        Money(-(monthly_by_period[p][f"{out_key}_cents"] if p in monthly_by_period else 0)).amount
+        for p in periods
+    ]
 
     recent_transactions = [
         {
@@ -545,15 +551,9 @@ def get_account_view_page(account_id: int):
     return {
         "account": account,
         "account_id": account_id,
-        "charts": charts,
+        "charts": _monthly_flow_chart(periods, in_series, out_series),
         "recent_transactions": recent_transactions,
     }
-
-
-def _start_of_month_shifted(d: date, delta_months: int) -> date:
-    total = d.year * 12 + (d.month - 1) + delta_months
-    year, month = divmod(total, 12)
-    return date(year, month + 1, 1)
 
 
 def get_payee_view_page(payee_id: int):
@@ -577,6 +577,8 @@ def get_payee_view_page(payee_id: int):
     flows = [(_payee_cash_flow(t), t) for t in transactions]
     paid = [p for (p, _), _t in flows if p]
     received = [r for (_, r), _t in flows if r]
+    window = set(_last_12_month_periods(today_))
+    net_12_cents = sum(r - p for (p, r), t in flows if t["date"][:7] in window)
 
     largest = max(paid) if paid else 0
     largest_date = next((t["date"] for (p, _), t in flows if p == largest), "") if paid else ""
@@ -590,35 +592,32 @@ def get_payee_view_page(payee_id: int):
         "last_seen": last_seen.isoformat() if last_seen else "",
         "last_seen_short": _short_date(last_seen),
         "days_since": (today_ - last_seen).days if last_seen else 0,
-        "net": round(sum(received) - sum(paid), 2),
-        "in_total": round(sum(received), 2),
+        "net": Money(sum(received) - sum(paid)).amount,
+        "in_total": Money(sum(received)).amount,
         "in_count": len(received),
-        "out_total": round(sum(paid), 2),
+        "out_total": Money(sum(paid)).amount,
         "out_count": len(paid),
-        "avg_month": round(sum(paid) / min(max(months_active, 1), 12), 2),
-        "cadence": None,
-        "typical_min": min(paid) if paid else 0,
-        "typical_max": max(paid) if paid else 0,
-        "largest": largest,
+        "avg_month": Money(scaled(net_12_cents, 1, min(months_active, 12))).amount,
+        "typical_min": Money(min(paid) if paid else 0).amount,
+        "typical_max": Money(max(paid) if paid else 0).amount,
+        "largest": Money(largest).amount,
         "largest_date": largest_date,
     }
 
     periods = _last_12_month_periods(today_)
-    paid_by_period = defaultdict(float)
-    received_by_period = defaultdict(float)
+    paid_by_period = defaultdict(int)
+    received_by_period = defaultdict(int)
 
     for t in transactions:
         period = t["date"][:7]
         p, r = _payee_cash_flow(t)
-        if p:
-            paid_by_period[period] += p
-        if r:
-            received_by_period[period] += r
+        paid_by_period[period] += p
+        received_by_period[period] += r
 
     charts = _monthly_flow_chart(
         periods,
-        [round(received_by_period.get(p, 0), 2) for p in periods],
-        [round(-paid_by_period.get(p, 0), 2) for p in periods],
+        [Money(received_by_period[p]).amount for p in periods],
+        [Money(-paid_by_period[p]).amount for p in periods],
     )
 
     recent_transactions = [
@@ -647,16 +646,8 @@ def get_payee_view_page(payee_id: int):
 
 
 def _payee_cash_flow(t):
-    amount = t["amount"]
-    is_suspense_liability = t["account_type"] == "liability" and t["account_budget"] == 0
-
-    if is_suspense_liability:
-        return (-amount, 0) if amount > 0 else (0, 0)
-    if amount < 0:
-        return (-amount, 0)
-    if amount > 0:
-        return (0, amount)
-    return (0, 0)
+    amount = t["amount_cents"]
+    return (-amount, 0) if amount < 0 else (0, amount)
 
 
 # Shared helpers for account/payee profile pages:

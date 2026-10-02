@@ -1,7 +1,5 @@
 from dataclasses import dataclass
 
-from intent_ledger.domain.money import MIRRORED_TYPES
-
 
 class _FieldAccessible:
     """Make a dataclass support row["field"] bracket access."""
@@ -39,13 +37,6 @@ class Account(_FieldAccessible):
             institution=row["institution"],
             account_number_last4=row["account_number_last4"],
         )
-
-    @property
-    def is_mirrored(self) -> bool:
-        """True for expense/income accounts, whose ledger sign convention is
-        the opposite of how they're displayed. See Money.signed_for_display.
-        """
-        return self.type in MIRRORED_TYPES
 
 
 @dataclass(frozen=True, slots=True)

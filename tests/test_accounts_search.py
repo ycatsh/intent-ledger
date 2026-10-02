@@ -31,8 +31,8 @@ def test_parse_search_field_name_is_case_insensitive():
 def test_parse_search_amount_and_amt_alias_with_operators():
     _text, filters = parse_search("amount>50 amt<=10")
     assert filters == [
-        Filter("amount", ">", 50.0),
-        Filter("amount", "<=", 10.0),
+        Filter("amount", ">", 5000),
+        Filter("amount", "<=", 1000),
     ]
 
 
@@ -63,7 +63,7 @@ def test_parse_search_mixes_free_text_and_filters():
     assert text == ["grocery"]
     assert filters == [
         Filter("payee", ":", "starbucks"),
-        Filter("amount", ">", 10.0),
+        Filter("amount", ">", 1000),
     ]
 
 

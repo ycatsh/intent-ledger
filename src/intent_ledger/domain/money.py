@@ -1,5 +1,7 @@
+import math
 import re
 from dataclasses import dataclass
+from fractions import Fraction
 
 MIRRORED_TYPES = frozenset({"expense", "income"})
 
@@ -8,11 +10,7 @@ _AMOUNT = re.compile(r"(-?)([0-9]*)(?:\.([0-9]{1,2}))?")
 
 @dataclass(frozen=True, order=True, slots=True)
 class Money:
-    """Integer-cents money value type.
-
-    Handles cents-to-dollars conversion, rounding, and display-sign
-    normalization for expense and income accounts.
-    """
+    """Integer-cents money value type."""
 
     cents: int
 
@@ -30,12 +28,6 @@ class Money:
     def amount(self) -> float:
         return self.cents / 100.0
 
-    def signed_for_display(self, account_type: str) -> "Money":
-        """Expense and income accounts use the opposite sign convention on the
-        ledger: negative means money in, while positive means spent or earned.
-        """
-        return Money(-self.cents) if account_type in MIRRORED_TYPES else self
-
     def __add__(self, other: "Money") -> "Money":
         return Money(self.cents + other.cents)
 
@@ -50,3 +42,10 @@ class Money:
 
     def __str__(self) -> str:
         return f"{self.amount:,.2f}"
+
+
+def scaled(cents: int, numerator: int, denominator: int) -> int:
+    """Multiply cents by a fraction, rounding half a cent away from zero."""
+    exact = Fraction(cents * numerator, denominator)
+    whole = math.floor(abs(exact) + Fraction(1, 2))
+    return whole if exact >= 0 else -whole

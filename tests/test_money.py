@@ -1,6 +1,6 @@
 import pytest
 
-from intent_ledger.domain.money import MIRRORED_TYPES, Money
+from intent_ledger.domain.money import Money
 
 
 def test_amount_converts_cents_to_dollars():
@@ -19,14 +19,6 @@ def test_parse_reads_text_straight_into_cents():
 def test_parse_rejects_anything_but_a_plain_amount(text):
     with pytest.raises(ValueError):
         Money.parse(text)
-
-
-def test_signed_for_display_flips_expense_and_income_only():
-    assert Money(500).signed_for_display("expense") == Money(-500)
-    assert Money(500).signed_for_display("income") == Money(-500)
-    assert Money(500).signed_for_display("asset") == Money(500)
-    assert Money(500).signed_for_display("liability") == Money(500)
-    assert {"expense", "income"} == MIRRORED_TYPES
 
 
 def test_arithmetic():
