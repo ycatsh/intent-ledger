@@ -192,3 +192,20 @@ def test_the_migrate_command_runs_without_building_the_app(legacy):
 
     assert result.exit_code == 0, result.output
     assert "Dry run on a copy of" in result.output
+
+
+def test_it_refuses_while_the_database_is_in_use(legacy):
+    conn = sqlite3.connect(legacy)
+    conn.execute("PRAGMA journal_mode = WAL")
+    reader = sqlite3.connect(legacy)
+    reader.execute("BEGIN")
+    reader.execute("SELECT * FROM accounts").fetchall()
+
+    try:
+        with pytest.raises(RuntimeError, match="still in use"):
+            migration.migrate()
+    finally:
+        reader.close()
+        conn.close()
+
+    assert query(legacy, "PRAGMA user_version")[0][0] == 0

@@ -174,6 +174,7 @@ def migrate(dry_run: bool = False) -> list[str]:
     if dry_run:
         return _dry_run(path)
 
+    _claim(path)
     report = [f"Backed up to {_backup(path, version)}."]
 
     conn = db.connect()
@@ -183,6 +184,19 @@ def migrate(dry_run: bool = False) -> list[str]:
         conn.close()
 
     return report
+
+
+def _claim(path: Path):
+    conn = sqlite3.connect(path, timeout=0)
+    try:
+        journal_mode = conn.execute("PRAGMA journal_mode = DELETE").fetchone()[0]
+    except sqlite3.OperationalError:
+        journal_mode = None
+    finally:
+        conn.close()
+
+    if journal_mode != "delete":
+        raise RuntimeError(f"{path} is still in use. Stop the app, then run this again.")
 
 
 def _version(path: Path) -> int | None:
