@@ -5,15 +5,30 @@ from datetime import date, timedelta
 from intent_ledger import forms
 from intent_ledger.accounting.repositories.payees import PayeeRepository
 from intent_ledger.accounting.repositories.subscriptions import SubscriptionRepository
-from intent_ledger.analytics.reports import get_recurring_payments
 from intent_ledger.db import db
-from intent_ledger.domain.money import Money
+from intent_ledger.domain.money import Money, scaled
 from intent_ledger.settings import today
 
 CADENCES = ("weekly", "monthly", "quarterly", "yearly")
 
 _CADENCE_MONTHS = {"monthly": 1, "quarterly": 3, "yearly": 12}
+_PER_YEAR = {"weekly": 52, "monthly": 12, "quarterly": 4, "yearly": 1}
 _GRACE_DAYS = {"weekly": 3, "monthly": 5, "quarterly": 10, "yearly": 15}
+_CADENCE_RANGES = {"weekly": (5, 9), "monthly": (27, 32), "quarterly": (85, 97), "yearly": (350, 380)}
+
+
+def classify_cadence(dates: list[date], max_variance_days=5) -> str | None:
+    """Return the cadence of these dates, or None when the gaps are irregular or unknown."""
+    dates = sorted(dates)
+    if len(dates) < 2:
+        return None
+
+    intervals = [(dates[i] - dates[i - 1]).days for i in range(1, len(dates))]
+    if max(intervals) - min(intervals) > max_variance_days:
+        return None
+
+    avg_interval = round(sum(intervals) / len(intervals))
+    return next((c for c, (lo, hi) in _CADENCE_RANGES.items() if lo <= avg_interval <= hi), None)
 
 
 def get_subscriptions_page():
@@ -54,13 +69,16 @@ def get_subscriptions_page():
             days=_GRACE_DAYS[r["cadence"]]
         )
 
+        monthly_cents = scaled(r["amount_cents"], _PER_YEAR[r["cadence"]], 12)
         item = {
             "id": r["id"],
             "name": r["name"] or r["payee_name"],
             "payee": r["payee_name"],
             "payee_id": r["payee_id"],
             "account_id": r["account_id"],
+            "amount_cents": r["amount_cents"],
             "amount": Money(r["amount_cents"]).amount,
+            "monthly_cents": monthly_cents,
             "cadence": r["cadence"],
             "status": r["status"],
             "first_seen_date": r["first_seen_date"],
@@ -79,11 +97,11 @@ def get_subscriptions_page():
             "payee_id": c["payee_id"],
             "payee": c["payee"],
             "amount": c["amount"],
-            "cadence": c["frequency"].lower(),
+            "cadence": c["cadence"],
             "occurrences": c["occurrences"],
             "last_charged": c["last_payment"].strftime("%b %d"),
         }
-        for c in get_recurring_payments()
+        for c in _detect_recurring_candidates()
         if c["payee_id"] not in tracked_payee_ids and c["next_payment"] != "Canceled"
     }
 
@@ -96,7 +114,8 @@ def get_subscriptions_page():
 
     candidates = list(candidates_by_payee.values())
 
-    monthly_total = sum(_monthly_equivalent(s["amount"], s["cadence"]) for s in active)
+    monthly_cents = sum(s["monthly_cents"] for s in active)
+    yearly_cents = sum(s["amount_cents"] * _PER_YEAR[s["cadence"]] for s in active)
 
     due_soon = [
         s
@@ -112,10 +131,10 @@ def get_subscriptions_page():
         "cancelled": cancelled,
         "candidates": candidates,
         "totals": {
-            "monthly": round(monthly_total, 2),
-            "annualized": round(monthly_total * 12, 2),
+            "monthly": Money(monthly_cents).amount,
+            "annualized": Money(yearly_cents).amount,
             "missed_count": sum(1 for s in active if s["missed"]),
-            "due_7d_amount": round(sum(s["amount"] for s in due_soon), 2),
+            "due_7d_amount": Money(sum(s["amount_cents"] for s in due_soon)).amount,
             "due_7d_count": len(due_soon),
         },
     }
@@ -167,7 +186,8 @@ def _account_tagged_candidates(conn, tracked_payee_ids):
                 "payee_id": payee_id,
                 "payee": last["payee_name"],
                 "amount": Money(-last["amount_cents"]).amount,
-                "cadence": _guess_cadence(txns),
+                "cadence": classify_cadence([date.fromisoformat(t["posted_date"]) for t in txns])
+                or "monthly",
                 "occurrences": len(txns),
                 "last_charged": date.fromisoformat(last["posted_date"]).strftime("%b %d"),
             }
@@ -176,38 +196,70 @@ def _account_tagged_candidates(conn, tracked_payee_ids):
     return candidates
 
 
+def _detect_recurring_candidates(min_occurrences=3):
+    with db.transaction() as conn:
+        rows = conn.execute("""
+            SELECT
+                p.posted_date,
+                -p.amount_cents AS amount_cents,
+                p.payee_id,
+                m.canonical_name
+            FROM income_expense_lines p
+            JOIN payees m ON m.id = p.payee_id
+            WHERE p.account_type = 'expense' AND p.amount_cents > 0
+            ORDER BY p.payee_id, p.posted_date
+        """).fetchall()
+
+    groups = defaultdict(list)
+    for row in rows:
+        groups[(row["payee_id"], row["amount_cents"])].append(row)
+
+    today_ = today()
+    recurring = []
+
+    for (_, amount), txns in groups.items():
+        if len(txns) < min_occurrences:
+            continue
+
+        txns.sort(key=lambda x: x["posted_date"])
+        dates = [date.fromisoformat(txn["posted_date"]) for txn in txns]
+
+        cadence = classify_cadence(dates)
+        if cadence is None:
+            continue
+
+        avg_interval = round(
+            sum((dates[i] - dates[i - 1]).days for i in range(1, len(dates))) / (len(dates) - 1)
+        )
+
+        last_payment = dates[-1]
+        if (today_ - last_payment).days > 90:
+            continue
+
+        next_payment = last_payment + timedelta(days=avg_interval)
+        if today_ > next_payment + timedelta(days=30):
+            next_payment = "Canceled"
+
+        recurring.append(
+            {
+                "payee_id": txns[0]["payee_id"],
+                "payee": txns[0]["canonical_name"],
+                "cadence": cadence,
+                "amount": Money(amount).amount,
+                "occurrences": len(txns),
+                "last_payment": last_payment,
+                "next_payment": next_payment,
+            }
+        )
+
+    return sorted(recurring, key=lambda x: x["next_payment"] == "Canceled")
+
+
 def _subscription_account_id(conn) -> int:
     row = conn.execute("SELECT id FROM accounts WHERE role = 'subscriptions'").fetchone()
     if not row:
         raise ValueError("No account is set up to hold subscriptions.")
     return row["id"]
-
-
-def _guess_cadence(txns) -> str:
-    if len(txns) < 2:
-        return "monthly"
-
-    dates = [date.fromisoformat(t["posted_date"]) for t in txns]
-    intervals = [(dates[i] - dates[i - 1]).days for i in range(1, len(dates))]
-    avg_interval = sum(intervals) / len(intervals)
-
-    if avg_interval <= 10:
-        return "weekly"
-    if avg_interval <= 100:
-        return "monthly"
-    if avg_interval <= 200:
-        return "quarterly"
-    return "yearly"
-
-
-def _monthly_equivalent(amount, cadence):
-    if cadence == "weekly":
-        return amount * 52 / 12
-    if cadence == "quarterly":
-        return amount / 3
-    if cadence == "yearly":
-        return amount / 12
-    return amount
 
 
 def create_subscription(form) -> int:

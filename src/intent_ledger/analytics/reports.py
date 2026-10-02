@@ -1,5 +1,4 @@
 from calendar import monthrange
-from collections import defaultdict
 from datetime import date, timedelta
 
 from intent_ledger.db import db
@@ -307,75 +306,3 @@ def budget_progress(start: str, end: str):
 def _month_start(today: date, offset: int) -> str:
     total = today.year * 12 + today.month - 1 + offset
     return date(total // 12, total % 12 + 1, 1).isoformat()
-
-
-def get_recurring_payments(min_occurrences=3):
-    rows = _fetch_transactions_with_date()
-    groups = defaultdict(list)
-
-    for row in rows:
-        groups[(row["payee_id"], row["amount_cents"])].append(row)
-
-    today_ = current_day()
-    recurring = []
-
-    for (_, amount), txns in groups.items():
-        if len(txns) < min_occurrences:
-            continue
-
-        txns.sort(key=lambda x: x["posted_date"])
-        dates = [date.fromisoformat(txn["posted_date"]) for txn in txns]
-        intervals = [(dates[i] - dates[i - 1]).days for i in range(1, len(dates))]
-
-        if max(intervals) - min(intervals) > 5:
-            continue
-
-        avg_interval = round(sum(intervals) / len(intervals))
-
-        if 27 <= avg_interval <= 32:
-            frequency = "Monthly"
-        elif 350 <= avg_interval <= 380:
-            frequency = "Yearly"
-        else:
-            continue
-
-        last_payment = dates[-1]
-
-        if (today_ - last_payment).days > 90:
-            continue
-
-        next_payment = last_payment + timedelta(days=avg_interval)
-
-        if today_ > next_payment + timedelta(days=30):
-            next_payment = "Canceled"
-
-        recurring.append(
-            {
-                "payee_id": txns[0]["payee_id"],
-                "payee": txns[0]["canonical_name"],
-                "frequency": frequency,
-                "amount": Money(amount).amount,
-                "occurrences": len(txns),
-                "last_payment": last_payment,
-                "next_payment": next_payment,
-            }
-        )
-
-    return sorted(recurring, key=lambda x: x["next_payment"] == "Canceled")
-
-
-def _fetch_transactions_with_date():
-    with db.transaction() as conn:
-        return conn.execute(
-            """
-            SELECT
-                t.posted_date,
-                t.amount_cents,
-                t.payee_id,
-                m.canonical_name
-            FROM transactions t
-            JOIN payees m
-                ON m.id = t.payee_id
-            ORDER BY t.payee_id, t.posted_date
-            """
-        ).fetchall()
