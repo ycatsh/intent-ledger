@@ -1,316 +1,265 @@
 import csv
 import io
 import zipfile
+from datetime import datetime
 
 import pytest
 from openpyxl import load_workbook
-from werkzeug.datastructures import MultiDict
 
 from intent_ledger.accounting.ledger import rebuild_ledger
-from intent_ledger.accounting.projects import assign_transactions_to_project, create_project
-from intent_ledger.accounting.rules_overrides import add_override
-from intent_ledger.analytics.workbook import (
-    _expand_splits,
-    _slugify,
-    export_account_statement,
-    export_monthly_report,
-    export_project_report,
-    export_yearly_report,
-)
-from intent_ledger.settings import set_export_format
+from intent_ledger.analytics import reports, workbook
+from intent_ledger.settings import set_export_format, today
+
+JANUARY = {"year": 2026, "month": 1}
 
 
-def csv_rows(export, sheet_name):
-    with zipfile.ZipFile(io.BytesIO(export[1])) as archive:
-        return list(csv.reader(archive.read(f"{sheet_name}.csv").decode().splitlines()))
+@pytest.fixture
+def world(conn, account_factory, transaction_factory):
+    ids = {
+        "checking": account_factory("Test Checking"),
+        "savings": account_factory("Test Savings"),
+        "card": account_factory("Test Card", type="liability"),
+        "food": account_factory("Test Food", type="expense"),
+        "salary": account_factory("Test Salary", type="income"),
+        "opening": account_factory("Test Opening", type="equity"),
+    }
+    conn.execute(
+        "INSERT INTO account_rules (match_type, pattern, account_id) VALUES ('contains', 'ACME', ?)",
+        (ids["salary"],),
+    )
 
-
-class FakeForm(MultiDict):
-    def __init__(self, values=None, **fields):
-        fields = {**(values or {}), **fields}
-        super().__init__(
-            [
-                (key, str(item))
-                for key, value in fields.items()
-                for item in (value if isinstance(value, list) else [value])
-                if item is not None
-            ]
+    def pinned(account, day, cents, description, category):
+        transaction_hash = transaction_factory(account, day, cents, description)
+        conn.execute(
+            "INSERT INTO transactions_overrides (transaction_hash, account_id) VALUES (?, ?)",
+            (transaction_hash, category),
         )
+        return transaction_hash
+
+    pinned(ids["checking"], "2026-01-01", 100000, "OPENING BALANCE", ids["opening"])
+    transaction_factory(ids["checking"], "2026-01-05", 50000, "ACME PAYROLL")
+    pinned(ids["card"], "2026-01-06", -3000, "CAFE", ids["food"])
+    pinned(ids["card"], "2026-01-07", 500, "CAFE REFUND", ids["food"])
+    pinned(ids["checking"], "2026-01-08", -20000, "TO SAVINGS", ids["savings"])
+    alice = pinned(ids["checking"], "2026-01-09", -1500, "LUNCH WITH ALICE", ids["food"])
+    counterparty = conn.execute("INSERT INTO counterparties (name) VALUES ('Alice')").lastrowid
+    conn.execute(
+        "UPDATE transactions SET counterparty_id = ? WHERE transaction_hash = ?", (counterparty, alice)
+    )
+    project = conn.execute("INSERT INTO projects (name, budget_cents) VALUES ('Party', 10000)").lastrowid
+    conn.execute(
+        "INSERT INTO transactions_projects (transaction_hash, project_id) VALUES (?, ?)", (alice, project)
+    )
+    conn.commit()
+    rebuild_ledger()
+    return {**ids, "alice": alice, "project": project}
 
 
-def sheet_rows(export, sheet_name):
-    wb = load_workbook(io.BytesIO(export[1]))
-    return [tuple(row) for row in wb[sheet_name].iter_rows(values_only=True)]
+def _open(export):
+    return load_workbook(io.BytesIO(export[1]))
 
 
-def test_slugify_lowercases_and_replaces_non_alphanumerics():
-    assert _slugify("Checking Account #1") == "checking-account-1"
-    assert _slugify("  Leading/Trailing  ") == "leading-trailing"
+def _labels(sheet, label=1, value=2):
+    return {
+        row[label - 1].value: row[value - 1].value
+        for row in sheet.iter_rows()
+        if isinstance(row[label - 1].value, str) and len(row) >= value
+    }
 
 
-def test_expand_splits_passes_through_non_split_and_expands_split_rows():
-    rows = [
-        {"has_split": False, "date": "2026-01-01", "category": "Groceries", "amount": -10.0},
-        {
-            "has_split": True,
-            "date": "2026-01-02",
-            "transaction_hash": "h1",
-            "payee": "Costco",
-            "splits": [
-                {"account": "Groceries", "type": "expense", "amount": -6.0},
-                {"account": "Household", "type": "expense", "amount": -4.0},
-            ],
-        },
+def _total_row(sheet):
+    return next(row for row in sheet.iter_rows(values_only=True) if row[0] == "Total")
+
+
+def _grand_total(sheet):
+    return next(row[2] for row in sheet.iter_rows(values_only=True) if row[0] == "Grand total")
+
+
+def _csv(export, name):
+    with zipfile.ZipFile(io.BytesIO(export[1])) as archive:
+        return list(csv.reader(archive.read(f"{name}.csv").decode().splitlines()))
+
+
+def test_the_summary_is_net_and_leaves_out_own_transfers(world):
+    summary = reports.get_summary(**JANUARY)
+
+    assert summary["income_cents"] == 50000
+    assert summary["expenses_cents"] == 3000 - 500 + 1500
+    assert summary["net_cents"] == 50000 - 4000
+    assert summary["inflow_cents"] == 100000 + 50000 + 500
+    assert summary["outflow_cents"] == 3000 + 1500
+    assert summary["transactions"] == 6
+
+
+def test_breakdowns_add_up_to_the_summary(world):
+    expenses = reports.get_summary(**JANUARY)["expenses_cents"]
+
+    assert sum(r["amount_cents"] for r in reports.get_categories(**JANUARY)) == expenses
+    assert sum(r["amount_cents"] for r in reports.get_payees(**JANUARY)) == expenses
+
+
+def test_income_sources_list_income_first(world):
+    sources = reports.get_income_sources(**JANUARY)
+
+    assert [(r["account"], r["kind"], r["amount_cents"]) for r in sources] == [
+        ("Test Salary", "Income", 50000),
+        ("Test Opening", "Equity", 100000),
+        ("Test Food", "Refund", 500),
     ]
 
-    expanded = list(_expand_splits(rows))
 
-    assert len(expanded) == 3
-    assert expanded[0]["category"] == "Groceries" and expanded[0]["amount"] == -10.0
-    assert expanded[1] == {
-        "date": "2026-01-02",
-        "transaction_hash": "h1",
-        "category": "Groceries",
-        "category_type": "expense",
-        "payee": "Costco",
-        "amount": -6.0,
-        "has_split": False,
-    }
-    assert expanded[2]["category"] == "Household" and expanded[2]["amount"] == -4.0
+def test_the_income_and_expense_report_reconciles(world):
+    book = _open(workbook.export_monthly_report(2026, 1))
+
+    summary = _labels(book["Summary"])
+    assert (summary["Income"], summary["Expenses"], summary["Net"]) == (500.0, 40.0, 460.0)
+    assert (summary["Money in"], summary["Money out"], summary["Cash flow"]) == (1505.0, 45.0, 1460.0)
+
+    total = _total_row(book["Transactions"])
+    assert (total[4], total[5]) == (500.0, 40.0)
+    assert _total_row(book["Categories"])[1] == 40.0
+    assert _total_row(book["Income sources"])[3] == 1505.0
+
+    first = next(book["Transactions"].iter_rows(min_row=2, values_only=True))
+    assert isinstance(first[0], datetime)
 
 
-def test_export_account_statement_running_balance_uses_full_unfiltered_ledger(
-    conn, account_factory, transaction_factory
-):
-    checking_id = account_factory("Test Checking")
-    groceries_id = account_factory("Test Groceries", type="expense")
-    conn.execute(
-        "INSERT INTO account_rules (match_type, pattern, account_id, priority) "
-        "VALUES ('equals', 'GROCERY RUN', ?, 0)",
-        (groceries_id,),
+def test_a_statement_reconciles_opening_to_closing(world):
+    book = _open(workbook.export_account_statement(world["checking"]))
+
+    summary = _labels(book["Summary"])
+    assert summary["Opening balance"] == 0
+    assert (summary["Money in"], summary["Money out"]) == (1500.0, 215.0)
+    assert summary["Closing balance"] == 1285.0
+
+    rows = [r for r in book["Transactions"].iter_rows(min_row=2, values_only=True) if r[0] != "Total"]
+    assert rows[-1][7] == 1285.0
+    assert {row[2]: row[3] for row in rows}["Test Savings"] == "Asset"
+    assert _total_row(book["Transactions"])[5:7] == (1500.0, 215.0)
+
+
+def test_by_category_groups_payees_under_each_category_with_subtotals(world):
+    sheet = _open(workbook.export_account_statement(world["checking"]))["By category"]
+    rows = list(sheet.iter_rows(min_row=2, values_only=True))
+
+    headers = [row[0] for row in rows if row[0] and row[0] != "Grand total"]
+    subtotals = [row[2] for row in rows if row[1] == "Total"]
+
+    assert headers == [
+        "Test Food (expense)",
+        "Test Opening (equity)",
+        "Test Salary (income)",
+        "Test Savings (asset)",
+    ]
+    assert subtotals == [-15.0, 1000.0, 500.0, -200.0]
+    assert _grand_total(sheet) == sum(subtotals) == 1285.0
+
+
+def test_a_filtered_statement_drops_the_opening_and_closing_balance(world):
+    summary = _labels(_open(workbook.export_account_statement(world["checking"], search="acme"))["Summary"])
+
+    assert "Opening balance" not in summary
+    assert summary["Filter"] == "acme"
+
+
+def test_a_split_gets_one_highlighted_row_per_part_and_still_reconciles(conn, world, account_factory):
+    gifts = account_factory("Test Gifts", type="expense")
+    conn.execute("DELETE FROM transactions_overrides WHERE transaction_hash = ?", (world["alice"],))
+    conn.executemany(
+        """
+        INSERT INTO transactions_splits (transaction_hash, account_id, amount_cents, note)
+        VALUES (?, ?, ?, ?)
+        """,
+        [(world["alice"], world["food"], 1000, "Lunch"), (world["alice"], gifts, 500, None)],
     )
     conn.commit()
-
-    transaction_factory(checking_id, "2026-01-01", 100000, "OPENING DEPOSIT")
-    transaction_factory(checking_id, "2026-01-05", -1500, "GROCERY RUN")
-    transaction_factory(checking_id, "2026-01-10", -2500, "GROCERY RUN")
     rebuild_ledger()
 
-    export = export_account_statement(checking_id, search="category:groceries")
+    book = _open(workbook.export_account_statement(world["checking"]))
+    sheet = book["Transactions"]
+    split = [r for r in sheet.iter_rows(min_row=2) if r[0].fill.start_color.rgb == "00FBF3DB"]
 
-    rows = sheet_rows(export, "All")
-    header, *data_rows = rows
-
-    assert header == ("Date", "Category", "Type", "Payee", "Debit", "Credit", "Balance")
-    assert data_rows[0][0] == "2026-01-05"
-    assert data_rows[0][4] == -15.0
-    assert data_rows[0][6] == pytest.approx(985.0)
-    assert data_rows[1][0] == "2026-01-10"
-    assert data_rows[1][6] == pytest.approx(960.0)
+    parts = [(r[2].value, r[4].value, r[6].value, r[7].value) for r in split]
+    assert parts == [("Test Food", "Lunch", 10.0, None), ("Test Gifts", "LUNCH WITH ALICE", 5.0, 1285.0)]
+    assert _labels(book["Summary"])["Closing balance"] == 1285.0
 
 
-def test_export_account_statement_excludes_equity_from_filtered_rows_but_not_balance(
-    conn, account_factory, transaction_factory
-):
-    checking_id = account_factory("Test Checking")
-    equity_id = account_factory("Test Opening Balances", type="equity")
+def test_the_balance_sheet_matches_net_worth_and_its_memos_match_their_detail(world):
+    book = _open(workbook.export_balance_sheet())
+    sheet = book["Balance sheet"]
 
-    opening_hash = transaction_factory(checking_id, "2026-01-01", 50000, "Open")
-    transaction_factory(checking_id, "2026-01-05", -2000, "COFFEE")
+    left = _labels(sheet)
+    assert left["Total assets"] == 1485.0
+    assert left["Total liabilities"] == 25.0
+    assert left["Net worth"] == 1460.0
+
+    memo = _labels(sheet, label=4, value=5)
+    assert memo["Test Opening"] == 1000.0
+    assert memo["Alice"] == 15.0
+    assert _total_row(book["Equity detail"])[5] == 1000.0
+    assert _total_row(book["Counter-party detail"])[6] == 15.0
+
+
+def test_the_project_report_covers_only_the_project(world):
+    book = _open(workbook.export_project_report(world["project"]))
+
+    summary = _labels(book["Summary"])
+    assert (summary["Expenses"], summary["Budget left"]) == (15.0, 85.0)
+    assert summary["Budget used %"] == 15.0
+    assert _total_row(book["Transactions"])[5] == 15.0
+
+
+def test_file_names_start_with_their_period(world):
+    month = today().strftime("%Y-%m")
+
+    assert workbook.export_monthly_report(2026, 1)[0] == "2026-01_income_expenses.xlsx"
+    assert workbook.export_yearly_report(2026)[0] == "2026_income_expenses.xlsx"
+    assert workbook.export_account_statement(world["checking"])[0] == "2026-01_statement_test_checking.xlsx"
+    assert workbook.export_balance_sheet()[0] == f"{month}_balance_sheet.xlsx"
+    assert workbook.export_project_report(world["project"])[0] == f"{month}_project_party.xlsx"
+
+
+def test_every_transaction_sheet_keeps_the_description_column_hidden(world):
+    for export in (
+        workbook.export_monthly_report(2026, 1),
+        workbook.export_project_report(world["project"]),
+        workbook.export_account_statement(world["checking"]),
+    ):
+        sheet = _open(export)["Transactions"]
+        column = next(c.column_letter for c in sheet[1] if c.value == "Description")
+        assert sheet.column_dimensions[column].hidden, export[0]
+
+
+def test_bank_text_that_looks_like_a_formula_stays_text(world, transaction_factory):
+    transaction_factory(world["checking"], "2026-01-20", -100, '=HYPERLINK("http://example.invalid","x")')
     rebuild_ledger()
 
-    add_override(FakeForm({"transaction_hash": opening_hash, "account_id": equity_id}))
-    rebuild_ledger()
+    rows = _open(workbook.export_account_statement(world["checking"]))["Transactions"].iter_rows(min_row=2)
+    cell = next(r[4] for r in rows if (r[4].value or "").startswith("="))
 
-    export = export_account_statement(checking_id)
-
-    rows = sheet_rows(export, "All")
-    _header, *data_rows = rows
-
-    assert len(data_rows) == 1
-    assert data_rows[0][0] == "2026-01-05"
-    assert data_rows[0][6] == pytest.approx(480.0)
-
-    summary_rows = sheet_rows(export, "Balance Sheet")
-    summary = {}
-    for r in summary_rows:
-        if r and r[0]:
-            summary[r[0]] = r[1]
-        if len(r) > 3 and r[3]:
-            summary[r[3]] = r[4]
-    assert summary["Opening Balance"] == pytest.approx(500.0)
-    assert summary["Closing Balance"] == pytest.approx(480.0)
+    assert cell.data_type == "s"
 
 
-def test_export_account_statement_raises_for_unknown_account(conn):
-    with pytest.raises(ValueError):
-        export_account_statement(999999)
-
-
-def test_export_account_statement_by_category_sheet_totals_match_transactions(
-    conn, account_factory, transaction_factory
-):
-    checking_id = account_factory("Test Checking")
-    groceries_id = account_factory("Test Groceries", type="expense")
-    conn.execute(
-        "INSERT INTO account_rules (match_type, pattern, account_id, priority) "
-        "VALUES ('equals', 'GROCERY RUN', ?, 0)",
-        (groceries_id,),
-    )
-    conn.commit()
-
-    transaction_factory(checking_id, "2026-01-05", -1500, "GROCERY RUN")
-    transaction_factory(checking_id, "2026-01-10", -2500, "GROCERY RUN")
-    rebuild_ledger()
-
-    export = export_account_statement(checking_id)
-
-    rows = sheet_rows(export, "By Category")
-    row_by_first_cell = {r[0]: r for r in rows if r[0]}
-    assert row_by_first_cell["Grand Total"][1] == pytest.approx(-40.0)
-
-
-def test_export_totals_are_exact_to_the_cent(conn, account_factory, transaction_factory):
-    checking_id = account_factory("Test Checking")
-    groceries_id = account_factory("Test Groceries", type="expense")
-    conn.execute(
-        "INSERT INTO account_rules (match_type, pattern, account_id) VALUES ('contains', 'GROCERY', ?)",
-        (groceries_id,),
-    )
-    for day, cents in ((5, -10), (6, -20), (7, -30), (8, -40)):
-        transaction_factory(checking_id, f"2026-01-0{day}", cents, "GROCERY RUN")
-    rebuild_ledger()
-
-    export = export_account_statement(checking_id)
-
-    by_category = {r[0]: r for r in sheet_rows(export, "By Category") if r[0]}
-    balances = [r[6] for r in sheet_rows(export, "All")[1:]]
-    assert by_category["Grand Total"][1] == -1.0
-    assert balances == [-0.1, -0.3, -0.6, -1.0]
-
-
-def test_export_monthly_report_has_expected_sheets_and_category_totals(
-    conn, account_factory, transaction_factory
-):
-    checking_id = account_factory("Test Checking")
-    groceries_id = account_factory("Test Groceries", type="expense")
-    conn.execute(
-        "INSERT INTO account_rules (match_type, pattern, account_id, priority) "
-        "VALUES ('equals', 'GROCERY RUN', ?, 0)",
-        (groceries_id,),
-    )
-    conn.commit()
-
-    transaction_factory(checking_id, "2026-03-05", -1500, "GROCERY RUN")
-    rebuild_ledger()
-
-    export = export_monthly_report(2026, 3)
-
-    wb = load_workbook(io.BytesIO(export[1]))
-    assert set(wb.sheetnames) == {"Summary", "Transactions", "Payees", "Inflows"}
-
-    summary = sheet_rows(export, "Summary")
-    assert ("Test Groceries", 15.0, 1, 100.0) in summary
-
-
-def test_export_monthly_report_as_csv_zips_one_csv_per_sheet(conn, account_factory, transaction_factory):
+def test_csv_exports_zip_one_file_per_sheet(conn, world):
     set_export_format(conn, "csv")
     conn.commit()
 
-    checking_id = account_factory("Test Checking")
-    groceries_id = account_factory("Test Groceries", type="expense")
-    conn.execute(
-        "INSERT INTO account_rules (match_type, pattern, account_id, priority) "
-        "VALUES ('equals', 'GROCERY RUN', ?, 0)",
-        (groceries_id,),
-    )
-    conn.commit()
+    export = workbook.export_monthly_report(2026, 1)
 
-    transaction_factory(checking_id, "2026-03-05", -1500, "GROCERY RUN")
-    rebuild_ledger()
-
-    export = export_monthly_report(2026, 3)
-
-    assert export[0].endswith(".zip")
+    assert export[0] == "2026-01_income_expenses.zip"
     with zipfile.ZipFile(io.BytesIO(export[1])) as archive:
-        assert set(archive.namelist()) == {"summary.csv", "transactions.csv", "payees.csv", "inflows.csv"}
-
-    assert ["Test Groceries", "15.0", "1", "100.0"] in csv_rows(export, "summary")
-
-
-def test_export_account_statement_as_csv_preserves_all_sheets(conn, account_factory, transaction_factory):
-    set_export_format(conn, "csv")
-    conn.commit()
-
-    checking_id = account_factory("Test Checking")
-    groceries_id = account_factory("Test Groceries", type="expense")
-    conn.execute(
-        "INSERT INTO account_rules (match_type, pattern, account_id, priority) "
-        "VALUES ('equals', 'GROCERY RUN', ?, 0)",
-        (groceries_id,),
-    )
-    conn.commit()
-
-    transaction_factory(checking_id, "2026-01-05", -1500, "GROCERY RUN")
-    rebuild_ledger()
-
-    export = export_account_statement(checking_id)
-
-    with zipfile.ZipFile(io.BytesIO(export[1])) as archive:
-        assert set(archive.namelist()) == {"balance-sheet.csv", "cashflow.csv", "by-category.csv", "all.csv"}
-
-    header, *data_rows = csv_rows(export, "all")
-    assert header == ["Date", "Category", "Type", "Payee", "Debit", "Credit", "Balance"]
-    assert data_rows[0][0] == "2026-01-05"
+        assert set(archive.namelist()) == {
+            "summary.csv",
+            "categories.csv",
+            "payees.csv",
+            "income_sources.csv",
+            "transactions.csv",
+        }
+    assert ["Test Food", "40.0", "3", "100.0"] in _csv(export, "categories")
 
 
-def test_export_yearly_report_covers_the_full_year(conn, account_factory, transaction_factory):
-    checking_id = account_factory("Test Checking")
-    groceries_id = account_factory("Test Groceries", type="expense")
-    conn.execute(
-        "INSERT INTO account_rules (match_type, pattern, account_id, priority) "
-        "VALUES ('equals', 'GROCERY RUN', ?, 0)",
-        (groceries_id,),
-    )
-    conn.commit()
-
-    transaction_factory(checking_id, "2026-01-05", -1500, "GROCERY RUN")
-    transaction_factory(checking_id, "2026-11-05", -2500, "GROCERY RUN")
-    rebuild_ledger()
-
-    export = export_yearly_report(2026)
-
-    txns = sheet_rows(export, "Transactions")
-    dates = {row[0] for row in txns[1:]}
-    assert dates == {"2026-01-05", "2026-11-05"}
-
-
-def test_export_project_report_includes_only_assigned_transactions(
-    conn, account_factory, transaction_factory
-):
-    checking_id = account_factory("Test Checking")
-    groceries_id = account_factory("Test Groceries", type="expense")
-    conn.execute(
-        "INSERT INTO account_rules (match_type, pattern, account_id, priority) "
-        "VALUES ('equals', 'PROJECT SPEND', ?, 0)",
-        (groceries_id,),
-    )
-    conn.commit()
-
-    in_project_hash = transaction_factory(checking_id, "2026-01-05", -5000, "PROJECT SPEND")
-    transaction_factory(checking_id, "2026-01-06", -3000, "PROJECT SPEND")
-    rebuild_ledger()
-
-    project_id = create_project(FakeForm({"name": "Kitchen Remodel"}))
-    assign_transactions_to_project([in_project_hash], project_id)
-
-    export = export_project_report(project_id)
-
-    txns = sheet_rows(export, "Transactions")
-    assert len(txns) == 2
-    assert txns[1][0] == "2026-01-05"
-
-
-def test_export_project_report_raises_for_unknown_project(conn):
+def test_unknown_accounts_and_projects_raise(world):
     with pytest.raises(ValueError):
-        export_project_report(999999)
+        workbook.export_account_statement(99999)
+    with pytest.raises(ValueError):
+        workbook.export_project_report(99999)

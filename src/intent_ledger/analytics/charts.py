@@ -1,33 +1,44 @@
 import calendar
 import math
 import statistics
+from collections import defaultdict
 from datetime import date, timedelta
 
 from intent_ledger.db import db
-from intent_ledger.domain.money import Money
-from intent_ledger.settings import today_in
+from intent_ledger.domain.money import Money, scaled
+from intent_ledger.settings import today as current_day
 
 PALETTE = ["#4a9eff", "#3d9970", "#c9921a", "#c0392b", "#9a9a9a", "#8e6fc9"]
+ACCENT, GREEN, _, RED, *_ = PALETTE
 
 
-def bar_chart(rows, label_field, value_field, color):
+def _series(label, data, color, dashed=False):
+    return {"label": label, "data": data, "color": color, "dashed": dashed}
+
+
+def expense_charts(progress, trend):
     return {
-        "labels": [r[label_field] for r in rows],
-        "datasets": [
-            {
-                "label": value_field.capitalize(),
-                "data": [round(abs(r[value_field]), 2) for r in rows],
-                "color": color,
-            }
-        ],
+        "burn": {
+            "labels": progress["labels"],
+            "datasets": [
+                _series("Spent", progress["spent"], RED),
+                _series("Budget", progress["budget"], ACCENT, dashed=True),
+            ],
+        },
+        "income": {"labels": trend["labels"], "datasets": [_series("Income", trend["income"], GREEN)]},
     }
 
 
-def line_chart(labels, series):
-    """series: an iterable of (label, data, color) tuples."""
+def project_charts(trend, budget):
+    cumulative = [_series("Spent", trend["cumulative_expenses"], RED)]
+    if budget:
+        cumulative.append(_series("Budget", [budget] * len(trend["labels"]), ACCENT, dashed=True))
+    if trend["has_income"]:
+        cumulative.append(_series("Earned", trend["cumulative_income"], GREEN))
+
     return {
-        "labels": labels,
-        "datasets": [{"label": label, "data": data, "color": color} for label, data, color in series],
+        "cumulative": {"labels": trend["labels"], "datasets": cumulative},
+        "daily": {"labels": trend["labels"], "datasets": [_series("Spent", trend["daily_expenses"], RED)]},
     }
 
 
@@ -40,128 +51,71 @@ def get_charts_page():
             "spend_flexibility": _spend_flexibility(conn),
             "category_pace": _category_pace(conn),
             "account_balances": _account_balances(conn),
+            "day_of_week": _day_of_week(conn),
+            "transaction_sizes": _transaction_size_histogram(conn),
         }
 
 
 def _net_worth(conn, months=12):
-    today = today_in(conn)
-    month_end = date(today.year, today.month, calendar.monthrange(today.year, today.month)[1])
-    ym = f"{today.year:04d}-{today.month:02d}"
-
-    rows = conn.execute(
-        """
-        WITH RECURSIVE months(month_end, ym, n) AS (
-            SELECT
-                ?,
-                ?,
-                1
-            UNION ALL
-            SELECT
-                date(month_end,'start of month','-1 day'),
-                strftime('%Y-%m',date(month_end,'start of month','-1 day')),
-                n + 1
-            FROM months
-            WHERE n < ?
-        )
-        SELECT
-            m.ym,
-            SUM(s.balance_cents) AS total
-        FROM months m
-        JOIN accounts a
-          ON a.type IN ('asset','liability')
-        LEFT JOIN account_snapshots s
-          ON s.account_id = a.id
-         AND s.snapshot_date = (
-                SELECT MAX(snapshot_date)
-                FROM account_snapshots
-                WHERE account_id = a.id
-                  AND snapshot_date <= m.month_end
-            )
-        GROUP BY m.ym
-        ORDER BY m.ym
-    """,
-        (month_end.isoformat(), ym, months),
-    ).fetchall()
-
+    _, keys, balances = _balances_by_month(conn, months)
+    totals = [sum(series[key] for series in balances.values()) for key in keys]
     return {
-        "labels": [r["ym"] for r in rows],
-        "datasets": [
-            {
-                "label": "Net Worth",
-                "data": [round(Money(r["total"] or 0).amount, 2) for r in rows],
-                "color": "#3d9970",
-            }
-        ],
+        "labels": keys,
+        "datasets": [{"label": "Net Worth", "data": [Money(t).amount for t in totals], "color": "#3d9970"}],
     }
 
 
 def cashflow_chart(months=6):
     with db.transaction() as conn:
-        return _cashflow(conn, months=months)
+        return _cashflow(conn, months)
 
 
 def _cashflow(conn, months=6):
-    latest = _latest_data_date(conn)
-    month_keys = _last_n_month_keys(months, end_date=latest)
-
+    keys = _last_n_month_keys(months)
     rows = conn.execute(
         """
-        SELECT
-            strftime('%Y-%m', t.posted_date) ym,
-            SUM(CASE WHEN a.type='income'  AND l.amount_cents < 0 THEN l.amount_cents ELSE 0 END) income,
-            SUM(CASE WHEN a.type='expense' AND l.amount_cents > 0 THEN l.amount_cents ELSE 0 END) expense
-        FROM ledger l
-        JOIN transactions t ON t.id = l.transaction_id
-        JOIN accounts a ON a.id = l.account_id
-        WHERE strftime('%Y-%m', t.posted_date) >= ?
-        GROUP BY ym
-    """,
-        (month_keys[0],),
+        SELECT strftime('%Y-%m', period) AS ym,
+               SUM(CASE WHEN account_type = 'income' THEN amount_cents ELSE -amount_cents END) AS net
+        FROM income_expense_lines
+        WHERE period >= ?
+        GROUP BY period
+        """,
+        (f"{keys[0]}-01",),
     ).fetchall()
 
-    by_month = {r["ym"]: r for r in rows}
-    income = [
-        round(Money(-(by_month[k]["income"] or 0)).amount, 2) if k in by_month else 0.0 for k in month_keys
-    ]
-    expense = [
-        round(Money(by_month[k]["expense"] or 0).amount, 2) if k in by_month else 0.0 for k in month_keys
-    ]
-    net = [round(i - e, 2) for i, e in zip(income, expense, strict=True)]
+    by_month = {row["ym"]: row["net"] for row in rows}
+    net = [Money(by_month.get(key, 0)).amount for key in keys]
 
     return {
-        "labels": month_keys,
+        "labels": keys,
         "datasets": [
-            {"label": "Income", "data": income, "color": "#3d9970"},
-            {"label": "Expense", "data": expense, "color": "#c0392b"},
-            {"label": "Net", "data": net, "color": "#4a9eff"},
+            {"label": "Saved", "data": [v if v >= 0 else None for v in net], "color": "#3d9970"},
+            {"label": "Overspent", "data": [v if v < 0 else None for v in net], "color": "#c0392b"},
         ],
     }
 
 
+def _daily_spending(conn, start, end):
+    rows = conn.execute(
+        """
+        SELECT posted_date AS day, SUM(amount_cents) AS amount_cents
+        FROM income_expense_lines
+        WHERE account_type = 'expense' AND posted_date BETWEEN ? AND ?
+        GROUP BY posted_date
+        """,
+        (start.isoformat(), end.isoformat()),
+    ).fetchall()
+    return {row["day"]: row["amount_cents"] for row in rows}
+
+
 def _spend_pace(conn):
-    """Anchored to the latest available transaction date rather than the
-    real today, for the same reason as _cashflow above.
-    """
-    today = _latest_data_date(conn)
+    today = current_day()
     this_month_start = today.replace(day=1)
     last_month_end = this_month_start - timedelta(days=1)
     last_month_start = last_month_end.replace(day=1)
 
     def daily_cumulative(start, end, until=None):
-        rows = conn.execute(
-            """
-            SELECT t.posted_date d, SUM(l.amount_cents) amt
-            FROM ledger l
-            JOIN transactions t ON t.id = l.transaction_id
-            JOIN accounts a ON a.id = l.account_id
-            WHERE a.type = 'expense' AND l.amount_cents > 0 AND t.posted_date BETWEEN ? AND ?
-            GROUP BY t.posted_date
-            ORDER BY t.posted_date
-        """,
-            (start.isoformat(), end.isoformat()),
-        ).fetchall()
-
-        by_day = {r["d"]: r["amt"] for r in rows}
+        by_day = _daily_spending(conn, start, end)
         days = calendar.monthrange(start.year, start.month)[1]
         cumulative = []
         total = 0
@@ -171,28 +125,16 @@ def _spend_pace(conn):
                 cumulative.append(None)
                 continue
             total += by_day.get(d.isoformat(), 0)
-            cumulative.append(round(Money(total).amount, 2))
-
+            cumulative.append(Money(total).amount)
         return cumulative
 
     this_month = daily_cumulative(this_month_start, today, until=today)
     last_month = daily_cumulative(last_month_start, last_month_end)
 
-    avg3_start = (this_month_start - timedelta(days=90)).replace(day=1)
-    rows = conn.execute(
-        """
-        SELECT t.posted_date d, SUM(l.amount_cents) amt
-        FROM ledger l
-        JOIN transactions t ON t.id = l.transaction_id
-        JOIN accounts a ON a.id = l.account_id
-        WHERE a.type = 'expense' AND l.amount_cents > 0 AND t.posted_date >= ? AND t.posted_date < ?
-        GROUP BY t.posted_date
-    """,
-        (avg3_start.isoformat(), this_month_start.isoformat()),
-    ).fetchall()
-
-    daily_avg = (Money(sum(r["amt"] for r in rows)).amount / 90) if rows else 0
-    avg_line = [round(daily_avg * (i + 1), 2) for i in range(len(this_month))]
+    window_start = date.fromisoformat(f"{_last_n_month_keys(4)[0]}-01")
+    window_days = (this_month_start - window_start).days
+    window_cents = sum(_daily_spending(conn, window_start, last_month_end).values())
+    avg_line = [Money(scaled(window_cents, i + 1, window_days)).amount for i in range(len(this_month))]
 
     days_this_month = calendar.monthrange(today.year, today.month)[1]
     labels = [str(i) for i in range(1, days_this_month + 1)]
@@ -208,29 +150,26 @@ def _spend_pace(conn):
 
 
 def _spend_flexibility(conn, months=12):
-    month_keys = _last_n_month_keys(months, today_in(conn))
-    window_start = f"{month_keys[0]}-01"
+    month_keys = _last_n_month_keys(months)
 
     recurring_rows = conn.execute(
         """
-        SELECT strftime('%Y-%m', posted_date) ym, SUM(-amount_cents) total
+        SELECT strftime('%Y-%m', posted_date) ym, SUM(amount_cents) total
         FROM subscriptions_charges
-        WHERE posted_date >= ?
+        WHERE posted_date >= date(?, ?)
         GROUP BY ym
     """,
-        (window_start,),
+        (current_day().isoformat(), f"-{months} months"),
     ).fetchall()
 
     total_rows = conn.execute(
         """
-        SELECT strftime('%Y-%m', t.posted_date) ym, SUM(l.amount_cents) total
-        FROM ledger l
-        JOIN transactions t ON t.id = l.transaction_id
-        JOIN accounts a ON a.id = l.account_id
-        WHERE a.type = 'expense' AND l.amount_cents > 0 AND t.posted_date >= ?
-        GROUP BY ym
-    """,
-        (window_start,),
+        SELECT strftime('%Y-%m', period) AS ym, SUM(amount_cents) AS total
+        FROM income_expense_lines
+        WHERE account_type = 'expense' AND period >= ?
+        GROUP BY period
+        """,
+        (f"{month_keys[0]}-01",),
     ).fetchall()
 
     recurring = dict.fromkeys(month_keys, 0)
@@ -238,30 +177,30 @@ def _spend_flexibility(conn, months=12):
 
     for r in recurring_rows:
         if r["ym"] in recurring:
-            recurring[r["ym"]] = r["total"]
+            recurring[r["ym"]] = -r["total"]
     for r in total_rows:
         if r["ym"] in total:
             total[r["ym"]] = r["total"]
 
+    fixed_pct = []
+    flexible_pct = []
+    for k in month_keys:
+        spend = max(total[k], recurring[k])
+        pct = (recurring[k] / spend * 100) if spend else 0
+        fixed_pct.append(round(pct, 1))
+        flexible_pct.append(round(100 - pct, 1))
+
     return {
         "labels": month_keys,
         "datasets": [
-            {
-                "label": "Recurring",
-                "data": [round(Money(recurring[k]).amount, 2) for k in month_keys],
-                "color": "#9a9a9a",
-            },
-            {
-                "label": "Discretionary",
-                "data": [round(Money(max(total[k] - recurring[k], 0)).amount, 2) for k in month_keys],
-                "color": "#4a9eff",
-            },
+            {"label": "Fixed %", "data": fixed_pct, "color": "#9a9a9a"},
+            {"label": "Flexible %", "data": flexible_pct, "color": "#4a9eff"},
         ],
     }
 
 
 def _category_pace(conn, baseline_months=6, min_abs_z=1.0, max_items=8):
-    today = today_in(conn)
+    today = current_day()
     days_in_month = calendar.monthrange(today.year, today.month)[1]
     day_frac = today.day / days_in_month
 
@@ -272,36 +211,26 @@ def _category_pace(conn, baseline_months=6, min_abs_z=1.0, max_items=8):
     if not categories:
         return {"labels": [], "datasets": []}
 
-    baseline_keys = _last_n_month_keys(baseline_months + 1, today)[:-1]
-    current_month_start = today.replace(day=1)
-    baseline_start = date.fromisoformat(f"{baseline_keys[0]}-01")
+    baseline_keys = _last_n_month_keys(baseline_months + 1)[:-1]
 
     baseline_rows = conn.execute(
         """
-        SELECT a.id, strftime('%Y-%m', t.posted_date) ym, SUM(l.amount_cents) total
-        FROM ledger l
-        JOIN transactions t ON t.id = l.transaction_id
-        JOIN accounts a ON a.id = l.account_id
-        WHERE a.type = 'expense' AND a.budget = 1 AND l.amount_cents > 0
-          AND t.posted_date >= ?
-          AND t.posted_date <  ?
-        GROUP BY a.id, ym
-    """,
-        (baseline_start.isoformat(), current_month_start.isoformat()),
+        SELECT account_id AS id, strftime('%Y-%m', period) AS ym, SUM(amount_cents) AS total
+        FROM income_expense_lines
+        WHERE account_type = 'expense' AND account_budget = 1 AND period >= ? AND period < ?
+        GROUP BY account_id, period
+        """,
+        (f"{baseline_keys[0]}-01", today.replace(day=1).isoformat()),
     ).fetchall()
 
     current_rows = conn.execute(
         """
-        SELECT a.id, SUM(l.amount_cents) total
-        FROM ledger l
-        JOIN transactions t ON t.id = l.transaction_id
-        JOIN accounts a ON a.id = l.account_id
-        WHERE a.type = 'expense' AND a.budget = 1 AND l.amount_cents > 0
-          AND t.posted_date >= ?
-          AND t.posted_date <= ?
-        GROUP BY a.id
-    """,
-        (current_month_start.isoformat(), today.isoformat()),
+        SELECT account_id AS id, SUM(amount_cents) AS total
+        FROM income_expense_lines
+        WHERE account_type = 'expense' AND account_budget = 1 AND posted_date BETWEEN ? AND ?
+        GROUP BY account_id
+        """,
+        (today.replace(day=1).isoformat(), today.isoformat()),
     ).fetchall()
 
     by_account = {}
@@ -345,69 +274,114 @@ def _category_pace(conn, baseline_months=6, min_abs_z=1.0, max_items=8):
     }
 
 
-def _account_balances(conn, months=12, top_n=3):
-    accounts = conn.execute("""
-        SELECT id, name
-        FROM accounts
-        WHERE type IN ('asset','liability')
-          AND is_active=1
-    """).fetchall()
-
-    month_keys = _last_n_month_keys(months, today_in(conn))
-
-    if not accounts:
-        return {"labels": month_keys, "datasets": []}
-
-    account_ids = [acc["id"] for acc in accounts]
-    placeholders = ",".join("?" * len(account_ids))
-
+def _day_of_week(conn, days=90):
     rows = conn.execute(
-        f"""
-        SELECT
-            account_id,
-            strftime('%Y-%m', snapshot_date) AS ym,
-            balance_cents
-        FROM account_snapshots
-        WHERE account_id IN ({placeholders})
-          AND snapshot_date >= ?
-        ORDER BY account_id, snapshot_date
-    """,
-        (*account_ids, f"{month_keys[0]}-01"),
+        """
+        SELECT CAST(strftime('%w', posted_date) AS INTEGER) AS dow, SUM(amount_cents) AS total
+        FROM income_expense_lines
+        WHERE account_type = 'expense' AND posted_date >= date(?, ?)
+        GROUP BY dow
+        """,
+        (current_day().isoformat(), f"-{days} days"),
     ).fetchall()
 
-    by_account = {}
-    for r in rows:
-        by_account.setdefault(r["account_id"], {})[r["ym"]] = Money(r["balance_cents"]).amount
-
-    series = []
-    for acc in accounts:
-        by_month = by_account.get(acc["id"])
-        if not by_month:
-            continue
-
-        last_known = 0
-        values = []
-
-        for k in month_keys:
-            if k in by_month:
-                last_known = by_month[k]
-            values.append(round(last_known, 2))
-
-        series.append({"label": acc["name"], "data": values})
-
-    series.sort(key=lambda s: abs(s["data"][-1]) if s["data"] else 0, reverse=True)
-
-    datasets = [{**s, "color": PALETTE[i % len(PALETTE)]} for i, s in enumerate(series[:top_n])]
+    by_dow = {r["dow"]: Money(r["total"]).amount for r in rows}
+    labels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
 
     return {
-        "labels": month_keys,
-        "datasets": datasets,
+        "labels": labels,
+        "datasets": [
+            {"label": "Spend", "data": [round(by_dow.get(i, 0), 2) for i in range(7)], "color": "#4a9eff"}
+        ],
     }
 
 
-def _last_n_month_keys(n, end_date):
+def _account_balances(conn, months=12):
+    accounts, keys, balances = _balances_by_month(conn, months)
+    datasets = [
+        {"label": account["name"], "data": [Money(balances[account["id"]][key]).amount for key in keys]}
+        for account in accounts
+        if any(balances[account["id"]].values())
+    ]
+
+    datasets.sort(key=lambda d: abs(d["data"][-1]), reverse=True)
+    datasets = datasets[:3]
+    for i, d in enumerate(datasets):
+        d["color"] = PALETTE[i % len(PALETTE)]
+
+    return {"labels": keys, "datasets": datasets}
+
+
+def _balances_by_month(conn, months):
+    keys = _last_n_month_keys(months)
+    month_ends = [date(int(key[:4]), int(key[5:]), 1) for key in keys]
+    month_ends = [d.replace(day=calendar.monthrange(d.year, d.month)[1]).isoformat() for d in month_ends]
+
+    accounts = conn.execute(
+        "SELECT id, name FROM accounts WHERE type IN ('asset', 'liability') ORDER BY id"
+    ).fetchall()
+    points = defaultdict(list)
+    for row in conn.execute(
+        """
+        SELECT s.account_id, s.snapshot_date, s.balance_cents
+        FROM account_snapshots s
+        JOIN accounts a ON a.id = s.account_id
+        WHERE a.type IN ('asset', 'liability')
+        ORDER BY s.account_id, s.snapshot_date
+        """
+    ):
+        points[row["account_id"]].append((row["snapshot_date"], row["balance_cents"]))
+
+    balances = {}
+    for account in accounts:
+        series, balance, index = {}, 0, 0
+        history = points[account["id"]]
+        for key, month_end in zip(keys, month_ends, strict=True):
+            while index < len(history) and history[index][0] <= month_end:
+                balance = history[index][1]
+                index += 1
+            series[key] = balance
+        balances[account["id"]] = series
+
+    return accounts, keys, balances
+
+
+def _transaction_size_histogram(conn, days=180):
+    rows = conn.execute(
+        """
+        SELECT amount_cents AS amt
+        FROM income_expense_lines
+        WHERE account_type = 'expense' AND amount_cents > 0 AND posted_date >= date(?, ?)
+        """,
+        (current_day().isoformat(), f"-{days} days"),
+    ).fetchall()
+
+    buckets = [0, 10, 25, 50, 100, 250, 500, 1000, 10000, float("inf")]
+
+    labels = [
+        f"<{buckets[1]}",
+        *[f"{int(buckets[i])}-{int(buckets[i + 1])}" for i in range(1, len(buckets) - 2)],
+        f"{int(buckets[-2])}+",
+    ]
+
+    counts = [0] * (len(labels))
+
+    for r in rows:
+        amt = Money(r["amt"]).amount
+
+        for i in range(len(buckets) - 1):
+            if buckets[i] <= amt < buckets[i + 1]:
+                counts[i] += 1
+                break
+
+    dataset = {"label": "Transactions", "data": counts, "color": ACCENT, "unit": "count"}
+    return {"labels": labels, "datasets": [dataset]}
+
+
+def _last_n_month_keys(n):
+    today = current_day()
     keys = []
-    y, m = end_date.year, end_date.month
+    y, m = today.year, today.month
     for _ in range(n):
         keys.append(f"{y:04d}-{m:02d}")
         m -= 1
@@ -415,10 +389,3 @@ def _last_n_month_keys(n, end_date):
             m = 12
             y -= 1
     return list(reversed(keys))
-
-
-def _latest_data_date(conn) -> date:
-    row = conn.execute("SELECT MAX(posted_date) AS d FROM transactions").fetchone()
-    if row and row["d"]:
-        return date.fromisoformat(row["d"])
-    return today_in(conn)

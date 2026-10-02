@@ -19,48 +19,25 @@ def _months_ago(n: int, from_date: date | None = None) -> date:
     return date(total // 12, total % 12 + 1, 1)
 
 
-def test_cashflow_anchors_to_latest_transaction_not_today(conn, account_factory, transaction_factory):
+def test_cashflow_shows_what_each_recent_month_saved_or_overspent(conn, account_factory, transaction_factory):
     checking_id = account_factory("Test Checking")
-    income_id = account_factory("Test Salary", type="income")
+    salary_id = account_factory("Test Salary", type="income")
+    groceries_id = account_factory("Test Groceries", type="expense")
+    _route_via_rule(conn, salary_id, "SALARY")
+    _route_via_rule(conn, groceries_id, "GROCERIES")
 
-    stale_date = date(2020, 3, 15)
-    transaction_factory(checking_id, stale_date.isoformat(), 100000, "Salary")
-    transaction_factory(income_id, stale_date.isoformat(), -100000, "Salary")
+    last_month = _months_ago(1).isoformat()
+    transaction_factory(checking_id, last_month, 100000, "SALARY")
+    transaction_factory(checking_id, last_month, -5000, "GROCERIES")
+    transaction_factory(checking_id, _today().isoformat(), -5000, "GROCERIES")
     rebuild_ledger()
 
     result = _cashflow(conn, months=6)
+    saved, overspent = (d["data"] for d in result["datasets"])
 
-    assert result["labels"][-1] == "2020-03"
-    assert len(result["labels"]) == 6
-
-    income_dataset = next(d for d in result["datasets"] if d["label"] == "Income")
-    assert income_dataset["data"][-1] == 1000.0
-    # Earlier months in the window with no data should be zero, not missing.
-    assert income_dataset["data"][0] == 0.0
-
-
-def test_cashflow_zero_fills_months_with_no_activity(conn, account_factory, transaction_factory):
-    checking_id = account_factory("Test Checking")
-    expense_id = account_factory("Test Groceries", type="expense")
-
-    conn.execute(
-        "INSERT INTO account_rules (match_type, pattern, account_id, priority) "
-        "VALUES ('contains', 'GROCERIES', ?, 0)",
-        (expense_id,),
-    )
-    conn.commit()
-
-    d1 = date(2021, 1, 10)
-    d2 = date(2021, 3, 10)
-    transaction_factory(checking_id, d1.isoformat(), -5000, "Groceries")
-    transaction_factory(checking_id, d2.isoformat(), -5000, "Groceries")
-    rebuild_ledger()
-
-    result = _cashflow(conn, months=6)
-
-    assert result["labels"] == ["2020-10", "2020-11", "2020-12", "2021-01", "2021-02", "2021-03"]
-    expense_dataset = next(d for d in result["datasets"] if d["label"] == "Expense")
-    assert expense_dataset["data"] == [0.0, 0.0, 0.0, 50.0, 0.0, 50.0]
+    assert result["labels"] == [_months_ago(n).strftime("%Y-%m") for n in range(5, -1, -1)]
+    assert saved == [0.0, 0.0, 0.0, 0.0, 950.0, None]
+    assert overspent == [None, None, None, None, None, -50.0]
 
 
 def test_account_balances_returns_only_top_3_by_magnitude(conn, account_factory, transaction_factory):
@@ -78,7 +55,7 @@ def test_account_balances_returns_only_top_3_by_magnitude(conn, account_factory,
     transaction_factory(equity_id, today, -5000, "Open")
     rebuild_ledger()
 
-    result = _account_balances(conn, months=1, top_n=3)
+    result = _account_balances(conn, months=1)
 
     labels = [d["label"] for d in result["datasets"]]
     assert labels == ["Test Checking", "Test Savings", "Test Cash"]
@@ -94,7 +71,7 @@ def test_account_balances_limits_to_top_n(conn, account_factory, transaction_fac
         transaction_factory(equity_id, today, -amount, "Open")
     rebuild_ledger()
 
-    result = _account_balances(conn, months=1, top_n=3)
+    result = _account_balances(conn, months=1)
 
     assert len(result["datasets"]) == 3
     assert [d["label"] for d in result["datasets"]] == ["Test Account 0", "Test Account 1", "Test Account 2"]
@@ -170,7 +147,7 @@ def test_category_pace_flags_overspending_and_underspending_categories(
     assert over["Test Frugal"] is None
 
 
-def test_spend_flexibility_splits_recurring_from_discretionary(conn, account_factory, transaction_factory):
+def test_spend_flexibility_shows_the_fixed_and_flexible_share(conn, account_factory, transaction_factory):
     checking_id = account_factory("Test Checking")
     subs_id = account_factory("Test Subscriptions", type="expense")
     payee_id = _netflix_subscription(conn, subs_id)
@@ -184,11 +161,10 @@ def test_spend_flexibility_splits_recurring_from_discretionary(conn, account_fac
     result = _spend_flexibility(conn, months=1)
 
     assert result["labels"] == [_today().strftime("%Y-%m")]
-    recurring = next(d for d in result["datasets"] if d["label"] == "Recurring")
-    discretionary = next(d for d in result["datasets"] if d["label"] == "Discretionary")
-
-    assert recurring["data"] == [15.0]
-    assert discretionary["data"] == [40.0]
+    assert [(d["label"], d["data"]) for d in result["datasets"]] == [
+        ("Fixed %", [27.3]),
+        ("Flexible %", [72.7]),
+    ]
 
 
 def test_spend_flexibility_counts_a_charge_only_once_the_ledger_has_it(
@@ -203,7 +179,7 @@ def test_spend_flexibility_counts_a_charge_only_once_the_ledger_has_it(
 
     result = _spend_flexibility(conn, months=1)
 
-    assert [d["data"] for d in result["datasets"]] == [[0.0], [0.0]]
+    assert [d["data"] for d in result["datasets"]] == [[0], [100]]
 
 
 def _netflix_subscription(conn, subs_id):

@@ -7,6 +7,9 @@
     <a class="btn btn-ghost" href="{{ url_for('accounts.accounts_export', account_id=selected_account_id, search=filters.search) }}">
       {{ icon("download") }} Export
     </a>
+    <a class="btn btn-ghost" href="{{ url_for('accounts.balance_sheet_export') }}">
+      {{ icon("download") }} Balance sheet
+    </a>
     <button type="button" class="btn btn-ghost text-accent" data-reveal="new-transaction-row">
       {{ icon("plus") }} Add transaction
     </button>

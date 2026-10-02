@@ -284,7 +284,7 @@ def ids(conn, account_factory, transaction_factory, transfer_rule_factory):
         "checking": checking,
         "groceries": groceries,
         "dining": dining,
-        "unknown": conn.execute("SELECT id FROM accounts WHERE name = 'Unknown'").fetchone()["id"],
+        "unknown": conn.execute("SELECT id FROM accounts WHERE role = 'unknown'").fetchone()["id"],
         "bank_hash": bank_hash,
         "bank_id": conn.execute(
             "SELECT id FROM transactions WHERE transaction_hash = ?", (bank_hash,)
@@ -402,3 +402,31 @@ def test_forwarded_headers_are_trusted_only_when_configured(conn, monkeypatch):
 
 def test_tests_never_touch_the_real_data_folder():
     assert config.DATA_DIR != config.PROJECT_ROOT / "data"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/budget",
+        "/expenses",
+        "/expenses?mode=year&year=2026",
+        "/accounts?account_id={checking}",
+        "/accounts/view/{checking}",
+        "/accounts/view/{groceries}",
+        "/payees/view/{payee}",
+        "/projects",
+        "/charts",
+        "/inbox",
+        "/rules",
+        "/mappings",
+        "/subscriptions",
+        "/import",
+        "/settings",
+        "/accounts/balance-sheet",
+        "/expenses/export",
+    ],
+)
+def test_every_page_and_export_answers(client, ids, path):
+    response = client.get(path.format(**ids))
+
+    assert response.status_code == 200, path

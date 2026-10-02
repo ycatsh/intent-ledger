@@ -203,6 +203,7 @@ def get_ledger_entries(account_id: int | None, search=None, sort="date_desc", li
         m.id AS payee_id,
         COALESCE(m.canonical_name, t.raw_description) AS payee,
         l.amount_cents,
+        t.raw_description AS description,
         t.note AS note,
         ov.id AS override_id,
         EXISTS (
@@ -303,6 +304,19 @@ def get_ledger_entries(account_id: int | None, search=None, sort="date_desc", li
     return rows
 
 
+def get_running_balances(conn, account_id: int) -> dict[str, int]:
+    rows = conn.execute(
+        """
+        SELECT transaction_hash, balance_cents
+        FROM ledger_running_balance
+        WHERE account_id = ?
+        ORDER BY ledger_id
+        """,
+        (account_id,),
+    )
+    return {row["transaction_hash"]: row["balance_cents"] for row in rows}
+
+
 def _attach_splits(conn, rows, exclude_account_id=None):
     hashes = [r["transaction_hash"] for r in rows if r["has_split"]]
     by_hash = _load_splits(conn, hashes, exclude_account_id=exclude_account_id)
@@ -351,6 +365,7 @@ def _load_splits(conn, transaction_hashes, exclude_account_id=None):
             {
                 "account_id": r["account_id"],
                 "account": r["account"],
+                "amount_cents": r["amount_cents"],
                 "amount": Money(r["amount_cents"]).amount,
                 "type": r["type"],
                 "note": r["note"],

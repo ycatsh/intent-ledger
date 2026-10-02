@@ -22,7 +22,7 @@ from intent_ledger.accounting.projects import (
     get_project_id_by_name,
     unassign_transactions_from_project,
 )
-from intent_ledger.analytics.workbook import export_account_statement
+from intent_ledger.analytics.workbook import export_account_statement, export_balance_sheet
 from intent_ledger.routes.downloads import send_export
 from intent_ledger.service import ledger_change
 from intent_ledger.settings import today
@@ -110,6 +110,11 @@ def accounts_export():
         abort(404)
 
     return send_export(export)
+
+
+@accounts_bp.get("/accounts/balance-sheet")
+def balance_sheet_export():
+    return send_export(export_balance_sheet())
 
 
 @accounts_bp.post("/accounts/assign-project")

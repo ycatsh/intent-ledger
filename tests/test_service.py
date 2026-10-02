@@ -10,6 +10,7 @@ from intent_ledger.accounting.projects import create_project
 from intent_ledger.accounting.rules import add_account_rule
 from intent_ledger.importer import uploads
 from intent_ledger.service import export_all, import_pending_statements, ledger_change
+from intent_ledger.settings import today
 
 
 class FakeForm(MultiDict):
@@ -38,11 +39,10 @@ def test_export_all_covers_every_account_and_project(conn, account_factory, tran
 
     paths = export_all()
 
-    # One statement per account (including the seeded system accounts) plus
-    # one project report plus one yearly report for 2026.
-    assert sum(p.name.startswith("statement_") for p in paths) >= 1
-    assert any(p.name == "project-report_test-project.xlsx" for p in paths)
-    assert any(p.name == "exp-report_2026.xlsx" for p in paths)
+    names = {p.name for p in paths}
+    assert "2026-01_statement_test_checking.xlsx" in names
+    assert f"{today():%Y-%m}_project_test_project.xlsx" in names
+    assert "2026_income_expenses.xlsx" in names
     assert all(p.exists() for p in paths)
 
 
@@ -54,8 +54,7 @@ def test_export_all_respects_category_toggles(conn, account_factory, transaction
 
     paths = export_all(accounts=False, projects=False, yearly=True)
 
-    assert all(p.name == "exp-report_2026.xlsx" for p in paths)
-    assert len(paths) == 1
+    assert [p.name for p in paths] == ["2026_income_expenses.xlsx"]
 
 
 def test_export_all_returns_nothing_when_no_data(conn):

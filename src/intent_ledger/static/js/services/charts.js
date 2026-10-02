@@ -124,6 +124,7 @@ function renderChart(canvas) {
           ? (context) => chartGradient(context, dataset.color)
           : dataset.color,
         borderWidth: 2,
+        borderDash: dataset.dashed ? [4, 4] : undefined,
         borderRadius: type === "bar" ? 3 : undefined,
         pointRadius: 0,
         pointHoverRadius: 4,

@@ -10,10 +10,12 @@
   {% set panels = [
     ("net_worth", "Net worth", "line", "Last 12 months"),
     ("spend_pace", "Spend pace vs. last month", "line", "This month vs last month"),
-    ("cashflow", "Cashflow", "line", "Last 6 months"),
-    ("spend_flexibility", "Recurring vs. discretionary spend", "line", "Last 12 months"),
+    ("cashflow", "Cash flow", "bar", "Income minus expenses, last 6 months"),
+    ("spend_flexibility", "Fixed vs. flexible spend", "line", "Share of spending, last 12 months"),
     ("category_pace", "Category pace", "bar", "Categories off their normal pace"),
     ("account_balances", "Account balances", "line", "Last 12 months"),
+    ("day_of_week", "Spending by weekday", "bar", "Last 90 days"),
+    ("transaction_sizes", "Transaction sizes", "bar", "Expenses, last 180 days"),
   ] %}
 
   <div class="grid grid-cols-1 gap-4 lg:grid-cols-2">

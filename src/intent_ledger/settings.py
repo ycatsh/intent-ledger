@@ -65,5 +65,8 @@ def today_in(conn) -> date:
 
 
 def today() -> date:
-    with db.transaction() as conn:
+    conn = db.connect()
+    try:
         return today_in(conn)
+    finally:
+        conn.close()

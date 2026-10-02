@@ -81,7 +81,7 @@
     <div class="panel chart-card">
       <div class="mb-3 text-xs font-semibold uppercase tracking-wide text-text-secondary">Spend over time</div>
       <div class="relative h-32">
-        <canvas data-chart='{{ charts.trend | tojson }}' data-chart-type="line"></canvas>
+        <canvas data-chart='{{ charts.cumulative | tojson }}' data-chart-type="line"></canvas>
       </div>
       <div class="mt-3 flex flex-wrap items-center justify-center gap-4" data-chart-legend></div>
     </div>
@@ -143,16 +143,15 @@
         </tr>
       </thead>
       <tbody>
-        {% for row, is_split in transactions %}
-        {% set amount = row[4] if row[4] != "" else row[5] %}
+        {% for line in transactions %}
         <tr>
-          <td class="whitespace-nowrap">{{ row[0] }}</td>
+          <td class="whitespace-nowrap">{{ line.date }}</td>
           <td>
-            {{ row[1] }}
-            {% if is_split %}<span class="badge">split</span>{% endif %}
+            {{ line.payee }}
+            {% if line.is_split %}<span class="badge">split</span>{% endif %}
           </td>
-          <td>{{ row[2] }}</td>
-          <td class="text-right mono {{ 'amount-negative' if amount < 0 else 'amount-positive' }}">{{ amount|money }}</td>
+          <td>{{ line.category }}</td>
+          <td class="text-right mono {{ 'amount-negative' if line.amount < 0 else 'amount-positive' }}">{{ line.amount|money }}</td>
         </tr>
         {% else %}
         <tr><td colspan="4" class="py-4 text-center text-text-secondary">No transactions yet.</td></tr>

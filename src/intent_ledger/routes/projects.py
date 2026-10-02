@@ -4,15 +4,16 @@ from intent_ledger.accounting.projects import (
     create_project,
     delete_project,
     get_project,
-    get_project_category_summary,
-    get_project_inflow_summary,
-    get_project_payee_summary,
-    get_project_summary,
-    get_project_transactions,
     get_project_trend,
     get_projects_overview,
 )
-from intent_ledger.analytics.charts import PALETTE, line_chart
+from intent_ledger.analytics.charts import project_charts
+from intent_ledger.analytics.reports import (
+    get_categories,
+    get_income_expense_lines,
+    get_payees,
+    get_summary,
+)
 from intent_ledger.analytics.workbook import export_project_report
 from intent_ledger.domain.money import Money
 from intent_ledger.routes.downloads import send_export
@@ -30,43 +31,12 @@ def projects():
         project_id = overview[0]["id"]
 
     project = get_project(project_id) if project_id else None
-    summary = get_project_summary(project_id) if project_id else None
+    summary = get_summary(project_id=project_id) if project else None
     budget_amount = Money(project["budget_cents"]).amount if project and project["budget_cents"] else None
     budget_percent = (
         round(100 * summary["expenses"] / budget_amount, 1) if budget_amount and summary else None
     )
-
-    categories = get_project_category_summary(project_id) if project_id else []
-    trend = (
-        get_project_trend(project_id)
-        if project_id
-        else {
-            "labels": [],
-            "daily_expenses": [],
-            "daily_income": [],
-            "cumulative_expenses": [],
-            "cumulative_income": [],
-            "has_income": False,
-        }
-    )
-
-    trend_series = [("Cumulative expenses", trend["cumulative_expenses"], PALETTE[3])]
-    if trend["has_income"]:
-        trend_series.append(("Cumulative income", trend["cumulative_income"], PALETTE[1]))
-
-    charts = {
-        "trend": line_chart(trend["labels"], trend_series),
-        "daily": {
-            "labels": trend["labels"],
-            "datasets": [
-                {
-                    "label": "Daily spend",
-                    "data": [round(v, 2) for v in trend["daily_expenses"]],
-                    "color": PALETTE[3],
-                }
-            ],
-        },
-    }
+    lines = get_income_expense_lines(project_id=project_id) if project else []
 
     return render_template(
         "projects.html",
@@ -76,11 +46,13 @@ def projects():
         summary=summary,
         budget_amount=budget_amount,
         budget_percent=budget_percent,
-        categories=categories,
-        transactions=get_project_transactions(project_id) if project_id else [],
-        payees=get_project_payee_summary(project_id, limit=10) if project_id else [],
-        inflows=get_project_inflow_summary(project_id, limit=10) if project_id else [],
-        charts=charts,
+        categories=get_categories(project_id=project_id) if project else [],
+        transactions=[
+            {**line, "amount": Money(line["amount_cents"] * (1 if line["type"] == "income" else -1)).amount}
+            for line in lines
+        ],
+        payees=get_payees(limit=10, project_id=project_id) if project else [],
+        charts=project_charts(get_project_trend(project_id), budget_amount) if project else {},
     )
 
 

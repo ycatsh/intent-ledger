@@ -1,9 +1,9 @@
-from datetime import date, timedelta
+from datetime import date
 
 from intent_ledger import forms
 from intent_ledger.accounting.repositories.projects import ProjectRepository
-from intent_ledger.analytics.reports import percent_of_total
 from intent_ledger.db import db
+from intent_ledger.domain.money import Money
 from intent_ledger.settings import today
 
 
@@ -48,26 +48,25 @@ def get_all_projects():
 def get_projects_overview():
     with db.transaction() as conn:
         return conn.execute("""
+            WITH totals AS (
+                SELECT
+                    tp.project_id,
+                    SUM(CASE WHEN x.account_type = 'income' THEN x.amount_cents ELSE 0 END) AS income_cents,
+                    SUM(CASE WHEN x.account_type = 'expense' THEN x.amount_cents ELSE 0 END) AS expenses_cents
+                FROM transactions_projects tp
+                JOIN income_expense_lines x ON x.transaction_hash = tp.transaction_hash
+                GROUP BY tp.project_id
+            )
             SELECT
                 p.id,
                 p.name,
                 p.type,
                 p.archived,
-                COUNT(DISTINCT t.id) AS transactions,
-                -SUM(CASE WHEN a.type = 'income' AND l.amount_cents < 0
-                    THEN l.amount_cents ELSE 0 END) / 100.0 AS income,
-                 SUM(CASE WHEN a.type = 'expense' AND l.amount_cents > 0
-                    THEN l.amount_cents ELSE 0 END) / 100.0 AS expenses
+                (SELECT COUNT(*) FROM transactions_projects tp WHERE tp.project_id = p.id) AS transactions,
+                COALESCE(totals.income_cents, 0) AS income_cents,
+                COALESCE(totals.expenses_cents, 0) AS expenses_cents
             FROM projects p
-            LEFT JOIN transactions_projects tp
-                ON tp.project_id = p.id
-            LEFT JOIN transactions t
-                ON t.transaction_hash = tp.transaction_hash
-            LEFT JOIN ledger l
-                ON l.transaction_id = t.id
-            LEFT JOIN accounts a
-                ON a.id = l.account_id
-            GROUP BY p.id
+            LEFT JOIN totals ON totals.project_id = p.id
             ORDER BY p.archived, p.name
         """).fetchall()
 
@@ -75,205 +74,6 @@ def get_projects_overview():
 def get_project(project_id: int):
     with db.transaction() as conn:
         return ProjectRepository(conn).get(project_id)
-
-
-def get_project_summary(project_id: int):
-    with db.transaction() as conn:
-        row = conn.execute(
-            """
-            SELECT
-                -SUM(CASE WHEN a.type = 'income' AND l.amount_cents < 0
-                    THEN l.amount_cents ELSE 0 END) / 100.0 AS income,
-                 SUM(CASE WHEN a.type = 'expense' AND l.amount_cents > 0
-                    THEN l.amount_cents ELSE 0 END) / 100.0 AS expenses,
-                COUNT(DISTINCT t.id) AS transactions
-            FROM transactions_projects tp
-            JOIN transactions t
-                ON t.transaction_hash = tp.transaction_hash
-            JOIN ledger l
-                ON l.transaction_id = t.id
-            JOIN accounts a
-                ON a.id = l.account_id
-            WHERE tp.project_id = ?
-        """,
-            (project_id,),
-        ).fetchone()
-
-    income = row["income"] or 0
-    expenses = row["expenses"] or 0
-
-    return {
-        "income": income,
-        "expenses": expenses,
-        "net": income - expenses,
-        "transactions": row["transactions"] or 0,
-    }
-
-
-def get_project_category_summary(project_id: int):
-    with db.transaction() as conn:
-        rows = conn.execute(
-            """
-            SELECT
-                a.name AS category,
-                SUM(l.amount_cents) / 100.0 AS amount,
-                COUNT(*) AS transactions
-            FROM transactions_projects tp
-            JOIN transactions t
-                ON t.transaction_hash = tp.transaction_hash
-            JOIN ledger l
-                ON l.transaction_id = t.id
-            JOIN accounts a
-                ON a.id = l.account_id
-            WHERE tp.project_id = ?
-              AND a.type = 'expense'
-              AND l.amount_cents > 0
-            GROUP BY a.id
-            ORDER BY amount DESC
-        """,
-            (project_id,),
-        ).fetchall()
-
-    percents = percent_of_total(rows)
-
-    return [
-        {
-            "category": r["category"],
-            "amount": -r["amount"],
-            "transactions": r["transactions"],
-            "percent": p,
-        }
-        for r, p in zip(rows, percents, strict=True)
-    ]
-
-
-def get_project_payee_summary(project_id: int, limit=None):
-    with db.transaction() as conn:
-        rows = conn.execute(
-            """
-            SELECT
-                m.canonical_name AS payee,
-                SUM(l.amount_cents) / 100.0 AS amount,
-                COUNT(*) AS transactions
-            FROM transactions_projects tp
-            JOIN transactions t
-                ON t.transaction_hash = tp.transaction_hash
-            JOIN ledger l
-                ON l.transaction_id = t.id
-            JOIN accounts a
-                ON a.id = l.account_id
-            JOIN payees m
-                ON m.id = t.payee_id
-            WHERE tp.project_id = ?
-              AND a.type = 'expense'
-              AND l.amount_cents > 0
-            GROUP BY m.id
-            ORDER BY amount DESC
-        """
-            + (" LIMIT ?" if limit else ""),
-            (project_id, limit) if limit else (project_id,),
-        ).fetchall()
-
-    percents = percent_of_total(rows)
-
-    return [
-        {
-            "payee": r["payee"],
-            "amount": -r["amount"],
-            "transactions": r["transactions"],
-            "percent": p,
-        }
-        for r, p in zip(rows, percents, strict=True)
-    ]
-
-
-def get_project_inflow_summary(project_id: int, limit=None):
-    with db.transaction() as conn:
-        rows = conn.execute(
-            """
-            SELECT
-                m.canonical_name AS source,
-                -SUM(l.amount_cents) / 100.0 AS amount,
-                COUNT(*) AS transactions
-            FROM transactions_projects tp
-            JOIN transactions t
-                ON t.transaction_hash = tp.transaction_hash
-            JOIN ledger l
-                ON l.transaction_id = t.id
-            JOIN accounts a
-                ON a.id = l.account_id
-            JOIN payees m
-                ON m.id = t.payee_id
-            WHERE tp.project_id = ?
-              AND a.type = 'income'
-              AND l.amount_cents < 0
-            GROUP BY m.id
-            ORDER BY amount DESC
-        """
-            + (" LIMIT ?" if limit else ""),
-            (project_id, limit) if limit else (project_id,),
-        ).fetchall()
-
-    percents = percent_of_total(rows)
-
-    return [
-        {
-            "source": r["source"],
-            "amount": r["amount"],
-            "transactions": r["transactions"],
-            "percent": p,
-        }
-        for r, p in zip(rows, percents, strict=True)
-    ]
-
-
-def get_project_transactions(project_id: int):
-    with db.transaction() as conn:
-        rows = conn.execute(
-            """
-            SELECT
-                t.posted_date date,
-                COALESCE(m.canonical_name, 'Unknown') payee,
-                a.name category,
-                a.type account_type,
-                ROUND(-l.amount_cents / 100.0, 2) amount,
-                t.raw_description description,
-                EXISTS (
-                    SELECT 1 FROM transactions_splits ts
-                    WHERE ts.transaction_hash = t.transaction_hash
-                ) is_split
-            FROM transactions_projects tp
-            JOIN transactions t
-                ON t.transaction_hash = tp.transaction_hash
-            JOIN ledger l
-                ON l.transaction_id = t.id
-               AND l.account_id != t.account_id
-            JOIN accounts a
-                ON a.id = l.account_id
-            LEFT JOIN payees m
-                ON m.id = t.payee_id
-            WHERE tp.project_id = ?
-              AND a.type IN ('income', 'expense')
-            ORDER BY t.posted_date, t.id, l.id
-            """,
-            [project_id],
-        ).fetchall()
-
-    return [
-        (
-            [
-                r["date"],
-                r["payee"],
-                r["category"],
-                r["account_type"].capitalize(),
-                r["amount"] if r["amount"] < 0 else "",
-                r["amount"] if r["amount"] > 0 else "",
-                r["description"],
-            ],
-            bool(r["is_split"]),
-        )
-        for r in rows
-    ]
 
 
 def get_project_trend(project_id: int):
@@ -288,73 +88,70 @@ def get_project_trend(project_id: int):
 
     with db.transaction() as conn:
         project = conn.execute(
-            "SELECT start_date, end_date FROM projects WHERE id = ?",
+            "SELECT start_date, end_date FROM projects WHERE id = ?", (project_id,)
+        ).fetchone()
+
+        if project is None:
+            return empty
+
+        txn_range = conn.execute(
+            """
+            SELECT MIN(posted_date) AS min_day, MAX(posted_date) AS max_day
+            FROM income_expense_lines
+            WHERE transaction_hash IN (
+                SELECT transaction_hash FROM transactions_projects WHERE project_id = ?
+            )
+            """,
             (project_id,),
         ).fetchone()
 
+        first = [d for d in (project["start_date"], txn_range["min_day"]) if d]
+        last = [d for d in (project["end_date"], txn_range["max_day"]) if d]
+        if not first or not last:
+            return empty
+
+        start_date = date.fromisoformat(min(first))
+        end_date = min(date.fromisoformat(max(last)), today())
+        if txn_range["max_day"]:
+            end_date = max(end_date, date.fromisoformat(txn_range["max_day"]))
+
         rows = conn.execute(
             """
+            WITH RECURSIVE calendar(day) AS (
+                SELECT date(:start)
+                UNION ALL
+                SELECT date(day, '+1 day') FROM calendar WHERE day < date(:end)
+            ),
+            daily AS (
+                SELECT
+                    posted_date AS day,
+                    SUM(CASE WHEN account_type = 'income' THEN amount_cents ELSE 0 END) AS income_cents,
+                    SUM(CASE WHEN account_type = 'expense' THEN amount_cents ELSE 0 END) AS expense_cents
+                FROM income_expense_lines
+                WHERE transaction_hash IN (
+                    SELECT transaction_hash FROM transactions_projects WHERE project_id = :project_id
+                )
+                GROUP BY posted_date
+            )
             SELECT
-                t.posted_date AS day,
-                -SUM(CASE WHEN a.type = 'income' AND l.amount_cents < 0
-                    THEN l.amount_cents ELSE 0 END) / 100.0 AS income,
-                 SUM(CASE WHEN a.type = 'expense' AND l.amount_cents > 0
-                    THEN l.amount_cents ELSE 0 END) / 100.0 AS expenses
-            FROM transactions_projects tp
-            JOIN transactions t
-                ON t.transaction_hash = tp.transaction_hash
-            JOIN ledger l
-                ON l.transaction_id = t.id
-            JOIN accounts a
-                ON a.id = l.account_id
-            WHERE tp.project_id = ?
-            GROUP BY day
-            ORDER BY day
+                c.day AS day,
+                COALESCE(d.expense_cents, 0) AS expense_cents,
+                COALESCE(d.income_cents, 0) AS income_cents,
+                SUM(COALESCE(d.expense_cents, 0)) OVER (ORDER BY c.day) AS cumulative_expense_cents,
+                SUM(COALESCE(d.income_cents, 0)) OVER (ORDER BY c.day) AS cumulative_income_cents
+            FROM calendar c
+            LEFT JOIN daily d
+                ON d.day = c.day
+            ORDER BY c.day
         """,
-            (project_id,),
+            {"start": start_date.isoformat(), "end": end_date.isoformat(), "project_id": project_id},
         ).fetchall()
 
-    if project is None:
-        return empty
-
-    daily_income = {r["day"][:10]: r["income"] or 0 for r in rows}
-    daily_expenses = {r["day"][:10]: r["expenses"] or 0 for r in rows}
-    txn_days = sorted(daily_income.keys() | daily_expenses.keys())
-
-    start = project["start_date"] or (txn_days[0] if txn_days else None)
-    end = project["end_date"] or (txn_days[-1] if txn_days else None)
-
-    if not start or not end:
-        return empty
-
-    start_date = date.fromisoformat(start[:10])
-    end_date = min(date.fromisoformat(end[:10]), today())
-
-    labels = []
-    daily_exp = []
-    daily_inc = []
-    cumulative_expenses = []
-    cumulative_income = []
-
-    running_expenses = 0
-    running_income = 0
-
-    day = start_date
-    while day <= end_date:
-        key = day.isoformat()
-        expense = daily_expenses.get(key, 0)
-        income = daily_income.get(key, 0)
-
-        running_expenses += expense
-        running_income += income
-
-        labels.append(day.strftime("%b %d"))
-        daily_exp.append(round(expense, 2))
-        daily_inc.append(round(income, 2))
-        cumulative_expenses.append(round(running_expenses, 2))
-        cumulative_income.append(round(running_income, 2))
-
-        day += timedelta(days=1)
+    labels = [date.fromisoformat(r["day"]).strftime("%b %d") for r in rows]
+    daily_exp = [round(Money(r["expense_cents"]).amount, 2) for r in rows]
+    daily_inc = [round(Money(r["income_cents"]).amount, 2) for r in rows]
+    cumulative_expenses = [round(Money(r["cumulative_expense_cents"]).amount, 2) for r in rows]
+    cumulative_income = [round(Money(r["cumulative_income_cents"]).amount, 2) for r in rows]
 
     return {
         "labels": labels,
@@ -362,7 +159,7 @@ def get_project_trend(project_id: int):
         "daily_income": daily_inc,
         "cumulative_expenses": cumulative_expenses,
         "cumulative_income": cumulative_income,
-        "has_income": running_income > 0,
+        "has_income": bool(cumulative_income and cumulative_income[-1] > 0),
     }
 
 
