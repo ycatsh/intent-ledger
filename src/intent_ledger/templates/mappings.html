@@ -351,11 +351,12 @@
     <div class="table-wrap mb-32">
       <table>
         <thead>
-          <tr><th>Name</th><th class="text-right">Transactions</th><th></th></tr>
+          <tr><th>Name</th><th>Notes</th><th class="text-right">Transactions</th><th></th></tr>
         </thead>
         <tbody>
           <tr data-new-row class="hidden bg-surface-raised align-middle">
             <td class="py-1.5"><input type="text" name="name" class="input" placeholder="Name" required></td>
+            <td class="py-1.5"><input type="text" name="notes" class="input" placeholder="Notes"></td>
             <td></td>
             <td class="py-1.5 text-right whitespace-nowrap">
               <button type="button" class="btn btn-ghost btn-icon text-accent" data-mapping-insert="counterparties" aria-label="Save">
@@ -371,13 +372,16 @@
             <td>
               <input type="text" class="input input-inline" value="{{ counterparty.name }}" data-mapping-update="counterparties:{{ counterparty.id }}:name" autocomplete="off">
             </td>
+            <td>
+              <input type="text" class="input input-inline" value="{{ counterparty.notes or '' }}" data-mapping-update="counterparties:{{ counterparty.id }}:notes" placeholder="-" autocomplete="off">
+            </td>
             <td class="text-right">{{ counterparty.usage_count }}</td>
             <td class="text-right">
               <button type="button" class="btn btn-ghost btn-icon text-negative" aria-label="Delete" data-mapping-delete="counterparties:{{ counterparty.id }}">{{ icon("trash") }}</button>
             </td>
           </tr>
           {% else %}
-          <tr><td colspan="3" class="py-4 text-center text-text-secondary">No counterparties yet.</td></tr>
+          <tr><td colspan="4" class="py-4 text-center text-text-secondary">No counterparties yet.</td></tr>
           {% endfor %}
         </tbody>
       </table>

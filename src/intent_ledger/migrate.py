@@ -90,6 +90,7 @@ def _v4_ledger_groups_become_integers(conn):
 
 REBUILT_IN_V5 = (
     "accounts",
+    "counterparties",
     "account_rules",
     "transfer_rules",
     "transactions",

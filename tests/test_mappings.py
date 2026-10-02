@@ -150,3 +150,19 @@ def test_built_in_accounts_can_be_renamed_and_still_work(conn):
 def test_malformed_changes_are_rejected_with_a_message(conn, changes):
     with pytest.raises(ValueError):
         save_mappings(changes)
+
+
+def test_a_counterparty_keeps_its_notes(conn):
+    id_map = save_mappings(
+        [
+            {
+                "op": "insert",
+                "table": "counterparties",
+                "temp_id": "c1",
+                "fields": {"name": "Sam", "notes": "Brother"},
+            }
+        ]
+    )
+
+    row = conn.execute("SELECT name, notes FROM counterparties WHERE id = ?", (id_map["c1"],)).fetchone()
+    assert (row["name"], row["notes"]) == ("Sam", "Brother")

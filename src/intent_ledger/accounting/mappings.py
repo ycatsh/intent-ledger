@@ -21,7 +21,7 @@ ALLOWED_FIELDS = {
         "needs_review",
     },
     "payee_aliases": {"payee_id", "alias", "normalized_alias", "source", "usage_count", "last_seen"},
-    "counterparties": {"name"},
+    "counterparties": {"name", "notes"},
 }
 
 NORMALIZED_FIELDS = ("canonical_name", "alias")
@@ -138,7 +138,7 @@ def get_mappings_page():
 
         counterparties = conn.execute("""
             SELECT
-                c.id, c.name,
+                c.id, c.name, c.notes,
                 COUNT(t.id) AS usage_count
             FROM counterparties c
             LEFT JOIN transactions t

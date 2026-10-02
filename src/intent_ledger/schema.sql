@@ -72,6 +72,7 @@ CREATE TABLE IF NOT EXISTS transfer_rules (
 CREATE TABLE IF NOT EXISTS counterparties (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
+    notes TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
