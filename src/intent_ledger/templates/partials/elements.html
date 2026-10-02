@@ -94,19 +94,11 @@
 </div>
 {% endmacro %}
 
-{% macro period_picker(label, prev_action, next_action, prev_fields={}, next_fields={}) %}
+{% macro period_picker(label, nav) %}
 <div class="flex items-center gap-0.5">
-  <form method="post" action="{{ prev_action }}">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    {% for k, v in prev_fields.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
-    <button type="submit" class="btn btn-ghost btn-icon" aria-label="Previous month">{{ icon("chevron-left") }}</button>
-  </form>
+  <a class="btn btn-ghost btn-icon" href="{{ nav.previous }}" aria-label="Previous month">{{ icon("chevron-left") }}</a>
   <span class="min-w-24 px-1 text-center text-sm font-medium">{{ label }}</span>
-  <form method="post" action="{{ next_action }}">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    {% for k, v in next_fields.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
-    <button type="submit" class="btn btn-ghost btn-icon" aria-label="Next month">{{ icon("chevron-right") }}</button>
-  </form>
+  <a class="btn btn-ghost btn-icon" href="{{ nav.next }}" aria-label="Next month">{{ icon("chevron-right") }}</a>
 </div>
 {% endmacro %}
 

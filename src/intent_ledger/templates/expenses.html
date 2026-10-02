@@ -7,11 +7,7 @@
     <a class="btn btn-ghost" href="{{ url_for('expenses.expenses_export', mode=mode) }}">{{ icon("download") }} Export</a>
   {% endset %}
   {% set controls %}
-    {{ period_picker(
-      period_label,
-      url_for('expenses.previous_period'),
-      url_for('expenses.next_period'),
-    ) }}
+    {% if nav %}{{ period_picker(period_label, nav) }}{% endif %}
   {% endset %}
   {{ toolbar("Expenses", actions=actions, controls=controls) }}
 {% endblock %}

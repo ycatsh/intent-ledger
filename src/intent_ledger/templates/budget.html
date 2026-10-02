@@ -1,5 +1,5 @@
 {% extends "layout.html" %}
-{% from "partials/elements.html" import toolbar, icon, chart_js %}
+{% from "partials/elements.html" import toolbar, icon, chart_js, period_picker %}
 {% block title %}Intent: Budget{% endblock %}
 
 {% set primary = budget.primary_period %}
@@ -14,19 +14,11 @@
     <button type="submit" form="budget-form" name="action" value="save" class="btn btn-ghost text-accent">
       {{ icon("check") }} Save budget
     </button>
-    <button type="submit" form="budget-form" name="action" value="today" class="btn btn-ghost">
-      {{ icon("calendar") }} This month
-    </button>
+    <a class="btn btn-ghost" href="{{ nav.today }}">{{ icon("calendar") }} This month</a>
   {% endset %}
   {% set controls %}
     <div class="flex flex-wrap items-center gap-1">
-      <div class="flex items-center gap-0.5">
-        <button type="submit" form="budget-form" name="action" value="previous"
-          class="btn btn-ghost btn-icon" aria-label="Previous month">{{ icon("chevron-left") }}</button>
-        <span class="min-w-24 px-1 text-center text-sm font-medium">{{ budget.periods[0].label }}</span>
-        <button type="submit" form="budget-form" name="action" value="next"
-          class="btn btn-ghost btn-icon" aria-label="Next month">{{ icon("chevron-right") }}</button>
-      </div>
+      {{ period_picker(budget.periods[0].label, nav) }}
       <select class="input w-36" data-bulk-fill aria-label="Fill all categories">
         <option value="">Fill all&hellip;</option>
         <option value="last">Last month</option>

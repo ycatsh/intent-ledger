@@ -100,9 +100,6 @@ MALFORMED = {
         ),
     ],
     "dashboard.refresh": [],
-    "expenses.current_period": [],
-    "expenses.next_period": [],
-    "expenses.previous_period": [],
     "import.import_delete": [("/import/nope.csv/delete", form(lambda i: {}))],
     "import.import_set_parser": [
         ("/import/{checking}/parser", json_body(lambda i: [])),
@@ -464,3 +461,15 @@ def test_an_upload_over_the_size_limit_is_refused(client, ids):
     response = client.post("/import/upload", data={"statements": statement, "account_id": ids["checking"]})
 
     assert response.status_code == 413
+
+
+def test_month_links_move_both_budget_and_expenses(client, ids):
+    page = client.get("/budget?month=2026-02").get_data(as_text=True)
+
+    assert 'href="/budget?month=2026-01"' in page
+    assert 'href="/budget?month=2026-03"' in page
+    assert 'href="/expenses?month=2026-01"' in client.get("/expenses").get_data(as_text=True)
+
+
+def test_a_malformed_month_is_not_found(client):
+    assert client.get("/budget?month=2026-13").status_code == 404

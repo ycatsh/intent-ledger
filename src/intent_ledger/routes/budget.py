@@ -11,19 +11,19 @@ from intent_ledger.accounting.budget import (
     save_budget,
     save_goal,
 )
-from intent_ledger.routes.period import get_period, set_period, shift_period
-from intent_ledger.settings import today
+from intent_ledger.routes.period import get_period, period_links, requested_period
 
 budget_bp = Blueprint("budget", __name__)
 
 
 @budget_bp.get("/budget")
 def budget():
-    year, month = get_period()
+    year, month = requested_period()
 
     return render_template(
         "budget.html",
         budget=get_budget_page(year, month),
+        nav=period_links("budget.budget", year, month),
         status_hex=STATUS_HEX,
     )
 
@@ -43,14 +43,7 @@ def budget_post():
 
 
 def _apply_action(action: str, target: str, primary_period: str) -> None:
-    if action == "previous":
-        shift_period(-1)
-    elif action == "next":
-        shift_period(1)
-    elif action == "today":
-        today_ = today()
-        set_period(today_.year, today_.month)
-    elif action == "save":
+    if action == "save":
         save_budget(request.form, primary_period)
         flash("Budget saved.", "success")
     elif action == "save_goal":

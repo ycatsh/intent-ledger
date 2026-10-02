@@ -1,6 +1,6 @@
 from datetime import date
 
-from flask import abort, session
+from flask import abort, request, session, url_for
 
 from intent_ledger.accounting.budget import shift_year_month
 from intent_ledger.settings import today
@@ -49,7 +49,26 @@ def set_period(year: int, month: int):
     session["finance_month"] = month
 
 
-def shift_period(delta: int):
-    year, month = get_period()
-    year, month = shift_year_month(year, month, delta)
-    set_period(year, month)
+def requested_period():
+    """Return the month to show, remembering a `?month=YYYY-MM` choice in the session."""
+    raw = request.args.get("month")
+    if raw:
+        try:
+            chosen = date.fromisoformat(f"{raw}-01")
+        except ValueError:
+            abort(404)
+        set_period(chosen.year, chosen.month)
+    return get_period()
+
+
+def period_links(endpoint: str, year: int, month: int) -> dict:
+    today_ = today()
+    return {
+        "previous": url_for(endpoint, month=_month_key(*shift_year_month(year, month, -1))),
+        "next": url_for(endpoint, month=_month_key(*shift_year_month(year, month, 1))),
+        "today": url_for(endpoint, month=_month_key(today_.year, today_.month)),
+    }
+
+
+def _month_key(year: int, month: int) -> str:
+    return f"{year}-{month:02d}"
